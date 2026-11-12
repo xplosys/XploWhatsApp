@@ -1,0 +1,136 @@
+# Local development stack. Production overrides (Nginx, TLS, backups, monitoring)
+# arrive in Phase 9 as docker-compose.prod.yml.
+name: xplowhatsapp
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_JSON: ${LOG_JSON:-true}
+  FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
+  API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+  DATABASE_URL: postgresql+asyncpg://xplo_app:${XPLO_APP_PASSWORD}@postgres:5432/xplowhatsapp
+  DATABASE_ADMIN_URL: postgresql+asyncpg://xplo_admin:${XPLO_ADMIN_PASSWORD}@postgres:5432/xplowhatsapp
+  DATABASE_OWNER_URL: postgresql+asyncpg://xplo_owner:${XPLO_OWNER_PASSWORD}@postgres:5432/xplowhatsapp
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  JWT_PRIVATE_KEY_PEM: ${JWT_PRIVATE_KEY_PEM:-}
+  JWT_KEY_ID: ${JWT_KEY_ID:-k1}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  ENCRYPTION_KEYS: ${ENCRYPTION_KEYS:-}
+  ENCRYPTION_ACTIVE_KEY_VERSION: ${ENCRYPTION_ACTIVE_KEY_VERSION:-v1}
+  EMAIL_BACKEND: ${EMAIL_BACKEND:-smtp}
+  EMAIL_FROM: ${EMAIL_FROM:-XploWhatsApp <no-reply@xplowhatsapp.com>}
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
+  RATE_LIMIT_AUTH_PER_MINUTE: ${RATE_LIMIT_AUTH_PER_MINUTE:-20}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: xplowhatsapp
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d xplowhatsapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [internal]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks: [internal]
+
+  # One-shot: create roles/extensions, run migrations, seed plans.
+  migrate:
+    build: ./backend
+    environment:
+      <<: *backend-env
+      DATABASE_SUPERUSER_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/xplowhatsapp
+    command: ["sh", "-c", "python -m app.cli bootstrap-db && alembic upgrade head && python -m app.cli seed"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+    networks: [internal]
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment: *backend-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks: [internal]
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    environment: *backend-env
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "default,messages,knowledge", "--loglevel=INFO", "--concurrency=2"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    networks: [internal]
+
+  beat:
+    build: ./backend
+    restart: unless-stopped
+    environment: *backend-env
+    command: ["celery", "-A", "app.workers.celery_app", "beat", "--loglevel=INFO", "--schedule", "/tmp/celerybeat-schedule"]
+    healthcheck:
+      disable: true
+    depends_on:
+      redis: { condition: service_healthy }
+    networks: [internal]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        API_INTERNAL_URL: http://api:8000
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks: [internal]
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+    networks: [internal]
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  internal:

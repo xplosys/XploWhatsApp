@@ -1,0 +1,18 @@
+"""Imports every model so Alembic and tests see the full metadata."""
+
+from app.modules.audit.models import AuditLog
+from app.modules.auth.models import RefreshToken, User, UserActionToken
+from app.modules.billing.models import Subscription, SubscriptionPlan
+from app.modules.tenants.models import Tenant, TenantInvitation, TenantMembership
+
+__all__ = [
+    "AuditLog",
+    "RefreshToken",
+    "Subscription",
+    "SubscriptionPlan",
+    "Tenant",
+    "TenantInvitation",
+    "TenantMembership",
+    "User",
+    "UserActionToken",
+]
