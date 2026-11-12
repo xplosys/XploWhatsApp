@@ -21,7 +21,15 @@ from app.db.session import app_transaction
 from tests.conftest import RegisterFn
 
 API = "/api/v1"
-APPEND_ONLY = {"audit_logs", "webhook_events", "whatsapp_credentials"}
+APPEND_ONLY = {
+    "audit_logs",
+    "webhook_events",
+    "whatsapp_credentials",
+    "usage_records",
+    "bot_configuration_versions",
+}
+# The app role has no UPDATE at all on these.
+NO_UPDATE = {"audit_logs", "usage_records", "bot_configuration_versions"}
 
 
 def _tenant_tables() -> dict[str, str]:
@@ -140,12 +148,30 @@ INSERTS: dict[str, Callable[[uuid.UUID, uuid.UUID, uuid.UUID], tuple[str, dict[s
         "now(), now())",
         {"id": uuid.uuid4(), "t": t, "k": uuid.uuid4().hex},
     ),
+    "ai_provider_configs": lambda t, u, p: (
+        "INSERT INTO ai_provider_configs (id, tenant_id, provider, enabled, key_source) VALUES (:id, :t, 'openai', true, 'platform')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "bot_configurations": lambda t, u, p: (
+        "INSERT INTO bot_configurations (id, tenant_id, name, auto_reply_enabled) VALUES (:id, :t, 'Evil bot', true)",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "bot_configuration_versions": lambda t, u, p: (
+        "INSERT INTO bot_configuration_versions (id, tenant_id, bot_configuration_id, version, config, created_at) "
+        "VALUES (:id, :t, :id, 99, '{}', now())",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "usage_records": lambda t, u, p: (
+        "INSERT INTO usage_records (id, tenant_id, metric, quantity, unit, cost_source, dimensions, occurred_at) "
+        "VALUES (:id, :t, 'ai_reply', -1000, 'message', 'none', '{}', now())",
+        {"id": uuid.uuid4(), "t": t},
+    ),
 }
 
 
 async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
     """One row in every WhatsApp table for the given tenant, written as that tenant."""
-    acc, num, contact, conv = (uuid.uuid4() for _ in range(4))
+    acc, num, contact, conv, bot = (uuid.uuid4() for _ in range(5))
     statements = [
         (
             "INSERT INTO whatsapp_accounts (id, tenant_id, waba_id, status, health) "
@@ -193,11 +219,40 @@ async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
             "'{}', 'done', 1, now(), now())",
             {"k": uuid.uuid4().hex},
         ),
+        (
+            "INSERT INTO ai_provider_configs (id, tenant_id, provider, enabled, key_source, api_key_ciphertext) "
+            "VALUES (gen_random_uuid(), :t, 'gemini', true, 'tenant', 'xenc1.secret')",
+            {},
+        ),
+        (
+            "INSERT INTO bot_configurations (id, tenant_id, name, active_version, auto_reply_enabled) "
+            "VALUES (:bot, :t, 'Bot', 1, true)",
+            {},
+        ),
+        (
+            "INSERT INTO bot_configuration_versions (id, tenant_id, bot_configuration_id, version, config, created_at) "
+            'VALUES (gen_random_uuid(), :t, :bot, 1, \'{"instructions": "secret prices"}\', now())',
+            {},
+        ),
+        (
+            "INSERT INTO usage_records (id, tenant_id, metric, quantity, unit, cost_source, dimensions, occurred_at) "
+            "VALUES (gen_random_uuid(), :t, 'ai_call', 1, 'call', 'none', '{}', now())",
+            {},
+        ),
     ]
     async with app_transaction(tenant_id) as s:
         for sql, extra in statements:
             await s.execute(
-                text(sql), {"t": tenant_id, "acc": acc, "num": num, "contact": contact, "conv": conv, **extra}
+                text(sql),
+                {
+                    "t": tenant_id,
+                    "acc": acc,
+                    "num": num,
+                    "contact": contact,
+                    "conv": conv,
+                    "bot": bot,
+                    **extra,
+                },
             )
 
 
@@ -225,7 +280,7 @@ async def test_tenant_cannot_see_or_change_other_tenant_rows(two_tenants) -> Non
         assert seen == 0, f"tenant A can read tenant B rows in {table}"
         # The app role has no UPDATE/DELETE on audit_logs and no DELETE on webhook_events
         # or credentials at all (tested below); RLS is still checked for every other action.
-        if table != "audit_logs":
+        if table not in NO_UPDATE:
             async with app_transaction(tenant_a, user_a) as s:
                 updated = (
                     await s.execute(
@@ -312,9 +367,21 @@ async def test_api_cannot_reach_other_tenant_resources_by_id(register: RegisterF
     )
 
 
-@pytest.mark.parametrize("table", ["webhook_events", "whatsapp_credentials"])
+@pytest.mark.parametrize(
+    "table", ["webhook_events", "whatsapp_credentials", "usage_records", "bot_configuration_versions"]
+)
 async def test_app_role_cannot_delete_webhook_events_or_credentials(two_tenants, table: str) -> None:  # type: ignore[no-untyped-def]
     _, tenant_b, _, _ = two_tenants
     with pytest.raises(DBAPIError, match="permission denied"):
         async with app_transaction(tenant_b) as s:
             await s.execute(text(f"DELETE FROM {table}"))
+
+
+@pytest.mark.parametrize(
+    "table", ["usage_records", "bot_configuration_versions", "ai_models", "ai_model_prices"]
+)
+async def test_app_role_cannot_rewrite_metering_versions_or_catalogue(two_tenants, table: str) -> None:  # type: ignore[no-untyped-def]
+    _, tenant_b, _, _ = two_tenants
+    with pytest.raises(DBAPIError, match="permission denied"):
+        async with app_transaction(tenant_b) as s:
+            await s.execute(text(f"UPDATE {table} SET id = id"))

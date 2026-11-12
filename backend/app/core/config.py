@@ -128,6 +128,24 @@ class Settings(BaseSettings):
     webhook_max_attempts: int = 8
     outbox_max_attempts: int = 8
 
+    # AI providers. Platform keys are XploSys's own and are used only for businesses whose
+    # plan allows it (limit "platform_ai_keys"); businesses can always add their own key.
+    # Model IDs and prices are data in the model catalogue, never settings or code.
+    openai_api_key: SecretStr | None = None
+    gemini_api_key: SecretStr | None = None
+    deepseek_api_key: SecretStr | None = None
+    openai_base_url: str = "https://api.openai.com"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com"
+    deepseek_base_url: str = "https://api.deepseek.com"
+    ai_http_timeout_seconds: float = 30.0
+    ai_max_output_tokens: int = 2048
+    # Attempts per provider before moving to the next one in the fallback chain.
+    ai_attempts_per_provider: int = 2
+    # Wait this long after an inbound message so a burst of messages gets one reply.
+    ai_reply_debounce_seconds: float = 2.0
+    ai_history_messages: int = 20
+    ai_history_max_chars: int = 12000
+
     @field_validator(
         "cors_allowed_origins", "whatsapp_opt_out_keywords", "whatsapp_opt_in_keywords", mode="before"
     )

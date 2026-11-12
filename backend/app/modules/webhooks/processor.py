@@ -12,7 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.session import app_transaction
+from app.modules.ai import autoreply
 from app.modules.conversations import service as conv
+from app.modules.conversations.models import Message
 from app.modules.webhooks.models import WebhookEvent
 from app.modules.whatsapp import service as wa
 from app.modules.whatsapp.models import (
@@ -76,6 +78,13 @@ def summarise(message: dict[str, Any]) -> tuple[str, str | None, dict[str, Any]]
     return mtype, body, payload
 
 
+def wants_reply(message: Message) -> bool:
+    """Reactions and STOP/START keywords are not questions for the assistant."""
+    if message.type in ("reaction", "unsupported", "system"):
+        return False
+    return not (message.type == "text" and conv.consent_keyword(message.body))
+
+
 async def _handle_messages(session: AsyncSession, tenant_id: uuid.UUID, value: dict[str, Any]) -> None:
     phone_number_id = str((value.get("metadata") or {}).get("phone_number_id") or "")
     number = await wa.number_by_phone_number_id(session, tenant_id, phone_number_id)
@@ -122,7 +131,7 @@ async def _handle_messages(session: AsyncSession, tenant_id: uuid.UUID, value: d
             profile_name=(profile.get("profile") or {}).get("name"),
         )
         msg_type, body, payload = summarise(message)
-        await conv.record_inbound(
+        stored = await conv.record_inbound(
             session,
             tenant_id,
             contact=contact,
@@ -134,6 +143,8 @@ async def _handle_messages(session: AsyncSession, tenant_id: uuid.UUID, value: d
             wa_timestamp=_ts(message.get("timestamp")),
             context_wa_message_id=(message.get("context") or {}).get("id"),
         )
+        if stored is not None and wants_reply(stored):
+            await autoreply.schedule_after_inbound(session, tenant_id, stored)
 
     for status in value.get("statuses") or []:
         wa_message_id = str(status.get("id") or "")

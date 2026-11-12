@@ -122,7 +122,7 @@ async def message_by_wa_id(session: AsyncSession, tenant_id: uuid.UUID, wa_messa
     ).scalar_one_or_none()
 
 
-def _consent_keyword(body: str | None) -> str | None:
+def consent_keyword(body: str | None) -> str | None:
     if not body:
         return None
     normalised = " ".join(body.strip().lower().split())
@@ -167,7 +167,7 @@ async def record_inbound(
     if contact.last_inbound_at is None or wa_timestamp > contact.last_inbound_at:
         contact.last_inbound_at = wa_timestamp
 
-    keyword = _consent_keyword(body) if msg_type == "text" else None
+    keyword = consent_keyword(body) if msg_type == "text" else None
     if keyword:
         set_consent(contact, keyword, "whatsapp_keyword")
 

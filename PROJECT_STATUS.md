@@ -1,7 +1,7 @@
 # XploWhatsApp — project status
 
 **Last updated:** 2026-11-12
-**Current phase:** Phase 2 complete, awaiting approval to start Phase 3 (AI provider orchestration)
+**Current phase:** Phase 3 complete, awaiting approval to start Phase 4 (RAG knowledge engine)
 
 ## Phase tracker
 
@@ -9,8 +9,8 @@
 |---|---|---|
 | 0. Architecture and planning | Done (approved 2026-11-12) | ARCHITECTURE.md, docs/META_INTEGRATION.md, docs/IMPLEMENTATION_PLAN.md |
 | 1. Foundation | Done (PR #1) | See Phase 1 report |
-| 2. Meta WhatsApp integration | Done, awaiting review | See Phase 2 report. Going live needs Meta App Review and Tech Provider approval |
-| 3. AI provider orchestration | Not started | |
+| 2. Meta WhatsApp integration | Done (PR #2) | See Phase 2 report. Going live needs Meta App Review and Tech Provider approval |
+| 3. AI provider orchestration | Done, awaiting review | See Phase 3 report and docs/AI_PROVIDERS.md |
 | 4. RAG knowledge engine | Not started | |
 | 5. Conversation management | Not started | |
 | 6. Customer dashboard | Not started | |
@@ -18,6 +18,38 @@
 | 8. Security hardening | Not started | |
 | 9. Monitoring and deployment | Not started | |
 | 10. Production testing and release | Not started | |
+
+## Phase 3 report
+
+### What is complete
+
+- **Data model (migration 0003):** `ai_models` and `ai_model_prices` (platform catalogue, read-only for the app role), `ai_provider_configs` (per business and provider, key envelope-encrypted), `bot_configurations` and `bot_configuration_versions` (the assistant and its immutable settings versions), `usage_records` (append-only metering). `conversations.needs_human` and `messages.ai_provenance` added. RLS on every tenant table; the app role cannot rewrite metering, versions or the catalogue.
+- **Provider adapters** for OpenAI (Responses API), Google Gemini (generateContent, key in a header) and DeepSeek (chat completions), each with structured JSON output, token usage, model listing and one error taxonomy with retryable errors.
+- **Keys:** a business's own key per provider, or XploSys's key when the plan allows (`platform_ai_keys`). Keys are checked by listing models; only the last four characters are ever shown.
+- **Catalogue:** model IDs and dated prices managed by the Super Admin (sync from provider, add by hand, activate, add a price). Cost estimates use the price in force when the call was made.
+- **Orchestrator:** main model plus up to three fallbacks, retries on retryable errors, no database transaction held during provider calls.
+- **Validator:** JSON shape, length, secrets and prompt leakage, and grounding of prices, percentages, times, phone numbers, emails and links against the business information and the customer's words. Failed answers try the next model; if none passes the handover message is sent.
+- **Automatic replies:** debounced job per inbound message, per-conversation Redis lock, and checks for superseded, already answered, AI off, opted out, window closed and monthly quota. Handover turns AI off for the conversation and marks it "Needs a person". Replies go through the existing WhatsApp outbox with provenance.
+- **Metering:** one `ai_call` record per provider request (tokens, estimated cost, key source, latency, outcome) and one `ai_reply` per AI message sent, counted against `monthly_ai_messages`.
+- **Frontend:** AI assistant page (providers and keys, assistant settings with model and fallbacks, preview chat using the unsaved settings, version history with rollback, monthly usage and estimated cost, automatic-reply switch with warnings when something is missing); conversations show "Needs a person", an AI on/off control per conversation and the model on AI messages; the Super Admin page has the model catalogue.
+
+### Tests
+
+- Backend: 155 tests, all passing. 16 new integration tests run against a fake that answers each provider's documented request and response shapes: keys and the Gemini header, platform keys and the plan, permissions, versions, a grounded reply with its cost, fallback, blocked and cut-off answers, an ungrounded price leading to handover, `needs_human`, invalid JSON and prompt leakage, message bursts, duplicates, every no-reply case including the quota, the preview and the admin catalogue. Isolation tests cover the new tables.
+- `ruff`, `mypy --strict`, `eslint`, `tsc` and `next build`: clean. Migration up, down and up again ran clean, and `alembic check` finds no drift.
+- Browser walkthrough against the running stack with fake providers and a fake Meta: turn on Gemini with XploSys's key and check it, save assistant settings, preview a grounded answer and an ungrounded one (handed over), turn on automatic replies, receive a WhatsApp message and see the AI reply sent with its model, receive a complaint and see the handover and "Needs a person", resume AI and see it answer again, and see usage with the estimated cost.
+
+### Not verified here
+
+- Real provider accounts. All calls ran against fakes built from the official API documentation. Before launch, run "Check key" and a preview with a real key for each provider.
+- The Super Admin catalogue card in a browser (the API is covered by tests; the console needs a Super Admin with two-factor sign-in).
+
+### Known limitations of Phase 3
+
+- The assistant only knows what is typed into its settings until knowledge documents arrive in Phase 4.
+- Images, audio and video are not interpreted.
+- Handed-over conversations show a badge; assignment and a live inbox come in Phase 5.
+- Model temperature is left at each provider's default.
 
 ## Phase 2 report
 
@@ -76,7 +108,7 @@
 
 ## Open decisions (need the owner's input)
 
-1. Approve Phase 2 and start Phase 3.
+1. Approve Phase 3 and start Phase 4 (RAG knowledge engine).
 2. Production object storage provider (decided by Phase 9).
 3. Billing entity for UK/US customers (affects Stripe).
 4. Legal review of Meta's WhatsApp Business Solution Terms for AI use, and of DPDP/GDPR obligations.
@@ -86,7 +118,7 @@
 - Create or confirm the Meta Business Portfolio and start business verification.
 - Create the Meta Developer App (Business type) and add WhatsApp.
 - Publish privacy policy, terms and data deletion pages on xplowhatsapp.com.
-- Open Gemini, OpenAI and DeepSeek API accounts for development.
+- Open Gemini, OpenAI and DeepSeek API accounts, put the platform keys in the server environment, and enter current model prices in the Super Admin catalogue (see docs/AI_PROVIDERS.md).
 
 ## Known limitations (deliberate, documented)
 

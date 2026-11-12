@@ -144,6 +144,8 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base)
     number_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
     ai_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    # Set when the assistant handed the conversation to a person; cleared when AI is turned back on.
+    needs_human: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     assigned_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     unread_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -196,4 +198,6 @@ class Message(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
     cost_estimate: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
     wa_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     template_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # For AI replies: provider, model, attempts, validation outcome and the message replied to.
+    ai_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     media_size_bytes: Mapped[int | None] = mapped_column(BigInteger)

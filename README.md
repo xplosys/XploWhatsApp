@@ -2,10 +2,11 @@
 
 AI-powered WhatsApp customer engagement and automation platform by XploSys. Multi-tenant SaaS built on the official Meta WhatsApp Cloud API.
 
-**Status:** Phase 1 (foundation) complete. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+**Status:** Phases 1 to 3 (foundation, WhatsApp, AI assistant) complete. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): system design, diagrams, data model, security decisions
 - [docs/META_INTEGRATION.md](docs/META_INTEGRATION.md): Meta setup, approvals and onboarding sequence
+- [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md): AI providers, keys, model catalogue and how replies are checked
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md): phased plan
 
 Stack: Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Celery, PostgreSQL 17 + pgvector, Redis, Next.js 16 + TypeScript + Tailwind CSS 4, Docker Compose.
@@ -28,6 +29,8 @@ docker compose up -d --build
 The one-shot `migrate` service creates the database roles, runs migrations and seeds the plan catalogue on every start (idempotent).
 
 To connect WhatsApp, fill in the `META_*` lines in `.env` (see docs/META_INTEGRATION.md §7 for where each value comes from and how to set up the webhook). Without them the WhatsApp page lists what is missing.
+
+For the AI assistant, optionally put XploSys's own provider keys in `OPENAI_API_KEY`, `GEMINI_API_KEY` and `DEEPSEEK_API_KEY` (businesses can also use their own keys). Then, as Super Admin, sync models, add prices and activate the models businesses may use (docs/AI_PROVIDERS.md §2).
 
 Create a Super Admin (they must turn on two-factor authentication before using the admin console):
 

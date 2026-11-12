@@ -24,3 +24,10 @@ def send_outbox_job(job_id: str, tenant_id: str) -> str:
     from app.modules.conversations.outbound import send_job
 
     return run_async(send_job(uuid.UUID(job_id), uuid.UUID(tenant_id)))
+
+
+@celery_app.task(name="app.workers.tasks.messages.ai_auto_reply")
+def ai_auto_reply(conversation_id: str, tenant_id: str, trigger_message_id: str) -> str:
+    from app.modules.ai.autoreply import reply
+
+    return run_async(reply(uuid.UUID(conversation_id), uuid.UUID(tenant_id), uuid.UUID(trigger_message_id)))

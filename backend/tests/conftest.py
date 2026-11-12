@@ -50,6 +50,11 @@ def containers() -> Iterator[dict[str, str]]:
             "RATE_LIMIT_AUTH_PER_MINUTE": "10000",
             "FRONTEND_BASE_URL": "http://app.test",
             "TASK_DISPATCH": "memory",
+            # Platform AI keys exist; tests decide per business whether to use them.
+            "OPENAI_API_KEY": "sk-platform-openai-0000000000",
+            "GEMINI_API_KEY": "AIza-platform-gemini-000000000000000",
+            "DEEPSEEK_API_KEY": "sk-platform-deepseek-000000000",
+            "AI_REPLY_DEBOUNCE_SECONDS": "0",
             "META_APP_ID": META_APP_ID,
             "META_APP_SECRET": META_APP_SECRET,
             "META_WEBHOOK_VERIFY_TOKEN": "verify-me",
