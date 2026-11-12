@@ -1,0 +1,69 @@
+[project]
+name = "xplowhatsapp-backend"
+version = "0.1.0"
+description = "XploWhatsApp API and workers"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "email-validator>=2.2",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "httpx>=0.28",
+    "redis>=5.2",
+    "celery[redis]>=5.4",
+    "argon2-cffi>=23.1",
+    "pyjwt[crypto]>=2.10",
+    "cryptography>=43",
+    "pyotp>=2.9",
+    "structlog>=24.4",
+    "pgvector>=0.3",
+    "typer>=0.15",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "testcontainers[postgres,redis]>=4.9",
+    "psycopg[binary]>=3.2",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC", "RUF"]
+# S105-S107 flag any identifier containing "token"/"password"; real secrets come from settings only.
+ignore = ["S101", "B008", "RUF012", "S105", "S106", "S107"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S311", "S608"]  # table names in SQL come from model metadata
+"alembic/**" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+strict = true
+ignore_missing_imports = true
+exclude = ["alembic/", "tests/"]
+
+[[tool.mypy.overrides]]
+# Celery has no type hints for its decorators.
+module = ["app.workers.*"]
+disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]

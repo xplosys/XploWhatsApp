@@ -1,0 +1,142 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * Design tokens, taken from the xplosys.com theme (style.css, v1.1.0):
+ * Plus Jakarta Sans, indigo #4f46e5 -> violet #7c3aed -> cyan #06b6d4 gradient,
+ * ink #0b1220, pill buttons, 18px cards, and a light/dark mode on data-theme.
+ * Components only use the semantic names below (bg-surface, text-muted, bg-brand ...).
+ */
+:root {
+  color-scheme: light;
+  --xp-ink: #0b1220;
+  --xp-ink-2: #1e293b;
+  --xp-muted: #5b6478;
+  --xp-line: #e6e8f0;
+  --xp-bg: #f6f7fb;
+  --xp-surface: #ffffff;
+  --xp-surface-2: #f6f7fb;
+  --xp-brand: #4f46e5;
+  --xp-brand-2: #7c3aed;
+  --xp-accent: #06b6d4;
+  --xp-chip: #eef2ff;
+  --xp-chip-ink: #4f46e5;
+  --xp-ring: #c7d2fe;
+  --xp-on-brand: #ffffff;
+  --xp-danger: #b42318;
+  --xp-danger-soft: #fef3f2;
+  --xp-success: #067647;
+  --xp-success-soft: #ecfdf3;
+  --xp-warning: #b54708;
+  --xp-warning-soft: #fffaeb;
+  --xp-grad: linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #06b6d4 100%);
+  --xp-grad-text: linear-gradient(90deg, #4338ca 0%, #7c3aed 50%, #c026d3 100%);
+  --xp-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 30px -12px rgba(15, 23, 42, 0.12);
+  --xp-shadow-brand: 0 10px 24px -10px rgba(79, 70, 229, 0.65);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --xp-ink: #e8ebf7;
+  --xp-ink-2: #c9cfe4;
+  --xp-muted: #9ba5c2;
+  --xp-line: rgba(148, 163, 184, 0.16);
+  --xp-bg: #070b14;
+  --xp-surface: #0e1526;
+  --xp-surface-2: #111a2e;
+  --xp-brand: #a5b4fc;
+  --xp-brand-2: #a78bfa;
+  --xp-chip: rgba(129, 140, 248, 0.14);
+  --xp-chip-ink: #c7d2fe;
+  --xp-ring: rgba(165, 180, 252, 0.45);
+  --xp-danger: #fda29b;
+  --xp-danger-soft: rgba(240, 68, 56, 0.12);
+  --xp-success: #75e0a7;
+  --xp-success-soft: rgba(23, 178, 106, 0.12);
+  --xp-warning: #fec84b;
+  --xp-warning-soft: rgba(247, 144, 9, 0.12);
+  --xp-grad-text: linear-gradient(90deg, #a5b4fc 0%, #c4b5fd 50%, #f0abfc 100%);
+  --xp-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -14px rgba(0, 0, 0, 0.6);
+  --xp-shadow-brand: 0 10px 24px -10px rgba(99, 102, 241, 0.55);
+}
+
+@theme inline {
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-ink: var(--xp-ink);
+  --color-ink-2: var(--xp-ink-2);
+  --color-muted: var(--xp-muted);
+  --color-line: var(--xp-line);
+  --color-canvas: var(--xp-bg);
+  --color-surface: var(--xp-surface);
+  --color-surface-muted: var(--xp-surface-2);
+  --color-brand: var(--xp-brand);
+  --color-brand-2: var(--xp-brand-2);
+  --color-accent: var(--xp-accent);
+  --color-brand-soft: var(--xp-chip);
+  --color-brand-ink: var(--xp-chip-ink);
+  --color-ring: var(--xp-ring);
+  --color-on-brand: var(--xp-on-brand);
+  --color-danger: var(--xp-danger);
+  --color-danger-soft: var(--xp-danger-soft);
+  --color-success: var(--xp-success);
+  --color-success-soft: var(--xp-success-soft);
+  --color-warning: var(--xp-warning);
+  --color-warning-soft: var(--xp-warning-soft);
+
+  --radius-control: 12px;
+  --radius-card: 18px;
+  --shadow-card: var(--xp-shadow);
+  --shadow-brand: var(--xp-shadow-brand);
+}
+
+@utility bg-brand-gradient {
+  background-image: var(--xp-grad);
+}
+
+@utility text-gradient {
+  background-image: var(--xp-grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Dark hero band used on xplosys.com, reused behind the sign-in screens. */
+@utility hero-band {
+  background:
+    radial-gradient(800px 480px at 88% 10%, rgba(124, 58, 237, 0.45), transparent 60%),
+    radial-gradient(700px 420px at 5% 100%, rgba(6, 182, 212, 0.28), transparent 60%),
+    radial-gradient(500px 300px at 50% 50%, rgba(79, 70, 229, 0.18), transparent 70%),
+    #0b1220;
+}
+
+@layer base {
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+    letter-spacing: -0.03em;
+    font-weight: 800;
+  }
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+    font-weight: 700;
+  }
+  :focus-visible {
+    outline: 3px solid #22d3ee;
+    outline-offset: 3px;
+  }
+}
+
+@utility text-gradient-light {
+  background-image: linear-gradient(90deg, #a5b4fc, #c4b5fd 50%, #f0abfc);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
