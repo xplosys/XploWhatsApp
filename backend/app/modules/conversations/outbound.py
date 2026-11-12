@@ -74,6 +74,7 @@ class OutboundRequest:
     template_components: list[dict[str, Any]] | None = None
     sender_type: str = SenderType.AGENT
     sent_by_user_id: uuid.UUID | None = None
+    ai_provenance: dict[str, Any] | None = None
 
     @property
     def kind(self) -> MessageKind:
@@ -184,6 +185,7 @@ async def queue_message(session: AsyncSession, tenant_id: uuid.UUID, req: Outbou
         direction=Direction.OUTBOUND,
         sender_type=req.sender_type,
         sent_by_user_id=req.sent_by_user_id,
+        ai_provenance=req.ai_provenance,
         type="template" if template else "text",
         body=body_text,
         payload=payload,

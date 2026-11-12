@@ -22,27 +22,29 @@ log = structlog.get_logger(__name__)
 class DispatchedJob:
     task: str
     args: tuple[str, ...]
+    countdown: float = 0
 
 
 DISPATCHED: list[DispatchedJob] = []
 
 
-def _send(task: str, *args: str) -> None:
+def _send(task: str, args: tuple[str, ...], countdown: float) -> None:
     from app.workers.celery_app import celery_app
 
-    celery_app.send_task(task, args=list(args))
+    celery_app.send_task(task, args=list(args), countdown=countdown or None)
 
 
-async def dispatch(task: str, *ids: uuid.UUID | str) -> None:
+async def dispatch(task: str, *ids: uuid.UUID | str, countdown: float = 0) -> None:
     args = tuple(str(i) for i in ids)
     if get_settings().task_dispatch == TaskDispatch.MEMORY:
-        DISPATCHED.append(DispatchedJob(task, args))
+        DISPATCHED.append(DispatchedJob(task, args, countdown))
         return
     try:
-        await asyncio.to_thread(_send, task, *args)
+        await asyncio.to_thread(_send, task, args, countdown)
     except Exception:  # broker down: the sweeper picks the job up later
         log.warning("dispatch_failed", task=task, exc_info=True)
 
 
 PROCESS_WEBHOOK_EVENT = "app.workers.tasks.messages.process_webhook_event"
 SEND_OUTBOX_JOB = "app.workers.tasks.messages.send_outbox_job"
+AI_AUTO_REPLY = "app.workers.tasks.messages.ai_auto_reply"

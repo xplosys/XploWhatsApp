@@ -86,7 +86,10 @@ export default function ConversationsPage() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-semibold">{contactLabel(c.contact)}</span>
-                    {c.unread_count > 0 && <Badge tone="brand">{c.unread_count}</Badge>}
+                    <span className="flex shrink-0 gap-1">
+                      {c.needs_human && <Badge tone="warning">Needs a person</Badge>}
+                      {c.unread_count > 0 && <Badge tone="brand">{c.unread_count}</Badge>}
+                    </span>
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted">{c.last_message_preview ?? "No messages"}</p>
                   <p className="mt-1 text-[11px] text-muted">
@@ -174,7 +177,10 @@ function Thread({
             {conversation.number_display ? ` · to ${conversation.number_display}` : ""}
           </p>
         </div>
-        <ConsentControl contact={contact} canManage={canManageContacts} onChanged={onChanged} />
+        <div className="flex flex-col items-end gap-2">
+          <ConsentControl contact={contact} canManage={canManageContacts} onChanged={onChanged} />
+          <AIControl conversation={conversation} canChange={canReply} onChanged={onChanged} />
+        </div>
       </header>
       <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
         {error && <Alert tone="error">{error}</Alert>}
@@ -207,7 +213,7 @@ function Bubble({ message: m }: { message: ChatMessage }) {
         <p className="mt-1 text-[11px] text-muted">
           {formatDateTime(m.wa_timestamp ?? m.created_at)}
           {!inbound && ` · ${STATUS_LABEL[m.status] ?? m.status}`}
-          {m.sender_type === "ai" && " · AI"}
+          {m.sender_type === "ai" && (m.ai_provenance?.model ? ` · AI (${m.ai_provenance.model})` : " · AI")}
         </p>
         {m.status === "failed" && (
           <p className="mt-1 text-xs text-danger">
@@ -216,6 +222,48 @@ function Bubble({ message: m }: { message: ChatMessage }) {
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+function AIControl({
+  conversation,
+  canChange,
+  onChanged,
+}: {
+  conversation: Conversation;
+  canChange: boolean;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const on = conversation.ai_enabled;
+
+  async function toggle() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/conversations/${conversation.id}/ai`, { method: "PUT", body: { enabled: !on } });
+      onChanged();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="flex items-center gap-2">
+        {conversation.needs_human && <Badge tone="warning">Needs a person</Badge>}
+        <Badge tone={on ? "success" : "neutral"}>{on ? "AI replies on" : "AI replies off"}</Badge>
+        {canChange && (
+          <Button variant="ghost" className="!px-3 !py-1 text-xs" loading={busy} onClick={toggle}>
+            {on ? "Pause AI" : conversation.needs_human ? "Handled, resume AI" : "Resume AI"}
+          </Button>
+        )}
+      </div>
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   );
 }

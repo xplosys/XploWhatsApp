@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { AICatalogueCard } from "@/components/admin/AICatalogueCard";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -133,6 +134,7 @@ export default function AdminPage() {
           )
         )}
       </Card>
+      {!error && <AICatalogueCard />}
     </>
   );
 }

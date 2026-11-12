@@ -56,6 +56,28 @@ class ConversationOut(BaseModel):
     service_window_expires_at: datetime | None
     service_window_open: bool
     last_message_preview: str | None
+    ai_enabled: bool
+    needs_human: bool
+
+
+def _conversation_out(
+    c: Conversation, contact: Contact, display: str | None, preview: str | None, now: datetime
+) -> ConversationOut:
+    return ConversationOut(
+        id=c.id,
+        contact=ContactOut.model_validate(contact),
+        number_id=c.number_id,
+        number_display=display,
+        status=c.status,
+        unread_count=c.unread_count,
+        last_inbound_at=c.last_inbound_at,
+        last_message_at=c.last_message_at,
+        service_window_expires_at=c.service_window_expires_at,
+        service_window_open=service_window_open_at(c, now),
+        last_message_preview=(preview or "")[:120] or None,
+        ai_enabled=c.ai_enabled,
+        needs_human=c.needs_human,
+    )
 
 
 class MessageOut(BaseModel):
@@ -76,6 +98,7 @@ class MessageOut(BaseModel):
     wa_timestamp: datetime | None
     created_at: datetime
     status_updated_at: datetime | None
+    ai_provenance: dict[str, Any] | None
 
 
 class SendMessage(BaseModel):
@@ -107,6 +130,10 @@ class ConversationReply(BaseModel):
         if bool(self.text) == bool(self.template_name):
             raise ValueError("Give either text or template_name.")
         return self
+
+
+class ConversationAIUpdate(BaseModel):
+    enabled: bool
 
 
 class ConsentUpdate(BaseModel):
@@ -202,22 +229,7 @@ async def list_conversations(
         )
     ).all()
     now = datetime.now(UTC)
-    items = [
-        ConversationOut(
-            id=c.id,
-            contact=ContactOut.model_validate(contact),
-            number_id=c.number_id,
-            number_display=display,
-            status=c.status,
-            unread_count=c.unread_count,
-            last_inbound_at=c.last_inbound_at,
-            last_message_at=c.last_message_at,
-            service_window_expires_at=c.service_window_expires_at,
-            service_window_open=service_window_open_at(c, now),
-            last_message_preview=(preview or "")[:120] or None,
-        )
-        for c, contact, display, preview in rows
-    ]
+    items = [_conversation_out(c, contact, display, preview, now) for c, contact, display, preview in rows]
     return Page(items=items, total=total, limit=page.limit, offset=page.offset)
 
 
@@ -239,23 +251,36 @@ async def list_messages(conversation_id: uuid.UUID, ctx: Reader, page: Paginatio
 async def mark_read(conversation_id: uuid.UUID, ctx: Reader) -> ConversationOut:
     conv = await _get_conversation(ctx, conversation_id)
     conv.unread_count = 0
+    return await _single_out(ctx, conv)
+
+
+async def _single_out(ctx: TenantContext, conv: Conversation) -> ConversationOut:
     contact = await ctx.session.get(Contact, conv.contact_id)
     number = await ctx.session.get(WhatsAppNumber, conv.number_id)
     assert contact is not None and number is not None
-    now = datetime.now(UTC)
-    return ConversationOut(
-        id=conv.id,
-        contact=ContactOut.model_validate(contact),
-        number_id=conv.number_id,
-        number_display=number.display_phone_number,
-        status=conv.status,
-        unread_count=0,
-        last_inbound_at=conv.last_inbound_at,
-        last_message_at=conv.last_message_at,
-        service_window_expires_at=conv.service_window_expires_at,
-        service_window_open=service_window_open_at(conv, now),
-        last_message_preview=None,
+    return _conversation_out(conv, contact, number.display_phone_number, None, datetime.now(UTC))
+
+
+@router.put("/conversations/{conversation_id}/ai", response_model=ConversationOut)
+async def set_conversation_ai(
+    conversation_id: uuid.UUID, body: ConversationAIUpdate, ctx: Replier, meta: Meta
+) -> ConversationOut:
+    """Turn automatic replies on or off for one conversation. Turning them back on
+    also clears the 'needs a person' flag set by a handover."""
+    conv = await _get_conversation(ctx, conversation_id)
+    conv.ai_enabled = body.enabled
+    if body.enabled:
+        conv.needs_human = False
+    await record(
+        ctx.session,
+        "conversation.ai_enabled" if body.enabled else "conversation.ai_disabled",
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user.id,
+        meta=meta,
+        target_type="conversation",
+        target_id=conv.id,
     )
+    return await _single_out(ctx, conv)
 
 
 @router.put("/contacts/{contact_id}/consent", response_model=ContactOut)

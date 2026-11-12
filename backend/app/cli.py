@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+from typing import Any
 
 import typer
 from sqlalchemy import select
@@ -28,6 +29,8 @@ DEFAULT_PLANS = [
             "max_knowledge_documents": 20,
             "max_storage_mb": 200,
             "monthly_ai_messages": 500,
+            # 1 = may use XploSys's own AI keys (if the server has them); 0 = own keys only.
+            "platform_ai_keys": 1,
         },
     },
 ]
@@ -55,6 +58,12 @@ async def _seed_plans() -> int:
             if exists is None:
                 session.add(SubscriptionPlan(**plan))
                 created += 1
+            else:
+                # New limit keys reach existing plans; values already set are kept.
+                limits: dict[str, Any] = plan["limits"]  # type: ignore[assignment]
+                missing = {k: v for k, v in limits.items() if k not in exists.limits}
+                if missing:
+                    exists.limits = {**exists.limits, **missing}
     return created
 
 

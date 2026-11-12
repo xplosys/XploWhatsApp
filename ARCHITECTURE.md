@@ -182,7 +182,7 @@ sequenceDiagram
   Note over P,Q: Outbox sweeper re-enqueues anything not dispatched
   Q->>W: process_webhook_event
   W->>P: SET LOCAL app.tenant_id, then upsert contact, conversation, message (unique wa_message_id)
-  W->>P: pg_advisory_xact_lock(conversation) + debounce window
+  W->>R: debounce window, then per-conversation Redis lock
   W->>W: handover active? AI disabled? outside working hours?
   W->>K: retrieve top-k chunks (tenant-scoped, threshold)
   W->>AI: generate(config, history window + summary, context)
@@ -248,7 +248,7 @@ flowchart TD
 - `AIProvider` (abstract): `generate(request) -> AIResult`, `embed(texts)`, `health_check()`, `estimate_cost(usage)`. Each adapter maps provider errors into one error taxonomy (`ProviderTimeout`, `ProviderRateLimited`, `ProviderAuthError`, `ProviderContentBlocked`, `ProviderUnavailable`, `ProviderBadRequest`).
 - Adapters: `GeminiAdapter` (google-genai SDK), `OpenAIAdapter` (openai SDK), `DeepSeekAdapter` (OpenAI-compatible endpoint, own base URL and catalogue entries). All network calls use async clients with explicit timeouts.
 - `AIRegistry`: maps provider key to adapter class; adapters are constructed per call with the tenant's resolved credential (tenant key or platform key if the plan allows).
-- `ModelCatalogue`: DB-backed (`ai_model_catalogue`) with context window, max output, capabilities, and **versioned prices** (input/output per 1M tokens, currency, effective_from). No prices in code.
+- `ModelCatalogue`: DB-backed (`ai_models`, with prices in `ai_model_prices`) with context window, max output, capabilities, and **versioned prices** (input/output per 1M tokens, currency, effective_from). No prices in code.
 - `AIOrchestrator`: builds the prompt (system template + tenant config + summary + recent window + retrieved context), enforces token budget, calls the primary provider with retries on retryable errors, then the configured fallback chain (only providers the tenant enabled), records usage, and returns a result with provenance (provider, model, chunks used).
 - `AIResponseValidator`: grounding check (prices/times/numbers in the answer must appear in retrieved context or the assistant config), business-scope check, length and WhatsApp formatting limits (4096 chars), PII/secret leakage check, refusal pattern detection. Failure leads to fallback message or handover, never to sending an unvalidated answer.
 - `AIUsageService`: one `usage_records` row per call (tokens, cost estimate, provider, model, key source), used for quotas and billing.
@@ -268,7 +268,7 @@ Window, categories and limits follow Meta's current policies; rules are data-dri
 
 ### 3.8 Conversation processing rules
 
-- **Ordering:** a per-conversation Postgres advisory lock serialises processing; a short debounce window (default 2 s, configurable) merges bursts of messages into a single AI turn.
+- **Ordering:** a short debounce window (default 2 s, `AI_REPLY_DEBOUNCE_SECONDS`) merges bursts of messages into a single AI turn: each inbound message schedules a reply job, and a job that is no longer for the latest inbound message stops. A per-conversation Redis lock (`ai_reply_lock:{conversation}`) serialises the rest. A Postgres advisory lock was the first plan, but it would hold a database connection open for the whole provider call (ADR 004).
 - **Handover:** an active `human_handover_sessions` row, or `conversations.ai_enabled = false`, stops automatic replies until released. Agents can release, or it auto-expires per tenant rules.
 - **Context window:** last N messages (token-budgeted) plus a rolling `conversation_summaries` entry refreshed every K messages by a background task.
 - **Unanswered queries:** when retrieval finds nothing above threshold, the message is flagged, the fallback or handover path runs, and it shows up in analytics so the business can add knowledge.
@@ -285,7 +285,7 @@ Window, categories and limits follow Meta's current policies; rules are data-dri
 - **Policies:** every tenant-owned table has `tenant_id uuid not null`, `ENABLE` and `FORCE ROW LEVEL SECURITY`, and a policy `USING (tenant_id = current_setting('app.tenant_id', true)::uuid) WITH CHECK (same)`. If the setting is missing, `current_setting(..., true)` returns NULL and no rows match, so the default is fail-closed.
 - **Setting context:** a session dependency opens a transaction and runs `SELECT set_config('app.tenant_id', :tid, true)` (transaction-local, safe with connection pooling). Workers do the same from the tenant ID stored on the event.
 - **Webhook routing:** before the tenant is known, the webhook calls `app_resolve_tenant_by_phone_number_id(text)`, a narrow `SECURITY DEFINER` function that returns only the tenant ID and number ID.
-- **Global tables (no tenant_id):** `users`, `refresh_tokens` (user-scoped), `subscription_plans`, `ai_model_catalogue`, pricing/rate catalogues. These are read-only for `xplo_app` where possible.
+- **Global tables (no tenant_id):** `users`, `refresh_tokens` (user-scoped), `subscription_plans`, `ai_models`, `ai_model_prices`, pricing/rate catalogues. These are read-only for `xplo_app` where possible.
 - **Composite foreign keys:** child tables reference `(tenant_id, id)` of parents, so a row cannot point at another tenant's parent even through a bug.
 - **Tests:** a generated test iterates every RLS table and asserts that tenant A's context cannot select, update or delete tenant B's rows, and cannot insert rows for B.
 
@@ -309,7 +309,7 @@ erDiagram
   bot_configurations ||--o{ bot_configuration_versions : versions
   whatsapp_numbers }o--o| bot_configurations : uses
   tenants ||--o{ ai_provider_configs : sets
-  ai_model_catalogue ||--o{ ai_provider_configs : referenced_by
+  ai_models ||--o{ ai_model_prices : priced_by
   tenants ||--o{ contacts : has
   contacts ||--o{ conversations : has
   whatsapp_numbers ||--o{ conversations : on
@@ -418,8 +418,9 @@ erDiagram
     uuid id PK
     uuid tenant_id FK
     string name
-    uuid active_version_id FK
+    int active_version
     bool auto_reply_enabled
+    unique tenant_id UK
   }
   bot_configuration_versions {
     uuid id PK
@@ -435,22 +436,32 @@ erDiagram
     uuid tenant_id FK
     string provider
     string key_source
-    bytea api_key_ciphertext
+    text api_key_ciphertext
     string key_version
+    string key_hint
     bool enabled
-    int priority
+    bool last_test_ok
   }
-  ai_model_catalogue {
+  ai_models {
     uuid id PK
     string provider
     string model_id
-    string kind
+    string display_name
     int context_window
     int max_output_tokens
     jsonb capabilities
-    jsonb pricing_history
     bool active
     unique provider_model_id UK
+  }
+  ai_model_prices {
+    uuid id PK
+    uuid model_pk FK
+    numeric input_per_mtok
+    numeric output_per_mtok
+    numeric cached_input_per_mtok
+    string currency
+    timestamptz effective_from
+    unique model_effective_from UK
   }
   contacts {
     uuid id PK
@@ -827,7 +838,7 @@ Full detail, including the approval sequence and what can be built before approv
 | 001 | Modular monolith with Celery worker process types, one image | Accepted |
 | 002 | Tenant isolation by RLS with `FORCE`, non-owner app role, transaction-local `app.tenant_id` | Accepted |
 | 003 | Webhook persist-then-ack with transactional inbox/outbox and sweeper | Accepted (Phase 2) |
-| 004 | Per-conversation advisory lock plus debounce for ordering | Proposed |
+| 004 | Debounce plus a per-conversation Redis lock for AI reply ordering (changed from a Postgres advisory lock, which would hold a connection during provider calls); a reply records the inbound message it answers so it is never sent twice | Accepted (Phase 3) |
 | 005 | Celery tasks run async code on a per-process event loop | Accepted |
 | 006 | Envelope encryption with versioned KEKs from env | Accepted |
 | 007 | ES256 JWT access tokens, opaque rotating refresh tokens with reuse detection | Accepted |
@@ -844,5 +855,10 @@ Full detail, including the approval sequence and what can be built before approv
 | 018 | Contacts are identified by business-scoped user ID or phone number (at least one required, each unique per tenant); BSUID is matched first | Accepted (Phase 2) |
 | 019 | Celery dispatch happens only after the database commit (`run_after_commit`); the beat sweeper covers broker outages and crashes | Accepted (Phase 2) |
 | 020 | Webhook routing and cross-tenant sweeps use SECURITY DEFINER functions owned by `xplo_definer` that return only IDs and tenant IDs; `webhook_events.tenant_id` is nullable so unroutable events are kept | Accepted (Phase 2) |
+| 021 | AI providers are called with small httpx adapters on each provider's documented REST API, not vendor SDKs: one error taxonomy (retryable or not), one timeout setting, the Gemini key sent in a header, and a transport hook so tests run against fakes | Accepted (Phase 3) |
+| 022 | Model IDs and prices live in a platform catalogue (`ai_models`, `ai_model_prices`), never in code. Prices are dated and only superseded, so a past cost estimate can be reproduced; calls to an unpriced model are recorded as `unpriced` | Accepted (Phase 3) |
+| 023 | Replies are structured JSON (`reply`, `needs_human`, `out_of_scope`) and pass a validator before sending: shape, length, secrets, prompt leakage, and grounding (prices, percentages, times, phone numbers, emails and links must appear in the business information or the customer's words). A failed answer tries the next model; if none passes, the handover message is sent | Accepted (Phase 3) |
+| 024 | A business uses its own API key (envelope-encrypted, bound to tenant and provider) or, if its plan's `platform_ai_keys` limit allows, XploSys's key from the environment | Accepted (Phase 3) |
+| 025 | Handover turns AI off for that conversation and marks it `needs_human` until a person turns AI back on; assistant settings are immutable versions so a change can be rolled back | Accepted (Phase 3) |
 
 Each will be written up under `docs/adr/` as it is implemented.

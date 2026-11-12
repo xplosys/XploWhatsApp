@@ -49,3 +49,24 @@ export function SelectField({
     </div>
   );
 }
+
+export function TextAreaField({
+  label,
+  hint,
+  ...props
+}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; hint?: string }) {
+  const id = useId();
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="block text-sm font-medium text-ink">
+        {label}
+      </label>
+      <textarea id={id} aria-describedby={hint ? `${id}-help` : undefined} className={`${control} min-h-24`} {...props} />
+      {hint && (
+        <p id={`${id}-help`} className="text-xs text-muted">
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
