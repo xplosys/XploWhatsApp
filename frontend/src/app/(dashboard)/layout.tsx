@@ -14,6 +14,8 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 
 const NAV = [
   { href: "/dashboard", label: "Overview" },
+  { href: "/conversations", label: "Conversations", permission: "conversations:read" },
+  { href: "/whatsapp", label: "WhatsApp", permission: "whatsapp:read" },
   { href: "/team", label: "Team", permission: "members:read" },
   { href: "/settings", label: "Business settings", permission: "tenant:read" },
   { href: "/account", label: "Account & security" },

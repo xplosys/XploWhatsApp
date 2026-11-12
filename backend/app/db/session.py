@@ -7,13 +7,15 @@ never leaks between pooled connections.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from functools import lru_cache
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 
@@ -83,3 +85,39 @@ async def dispose_engines() -> None:
         factory.cache_clear()
     get_app_sessionmaker.cache_clear()
     get_admin_sessionmaker.cache_clear()
+
+
+# ---- after-commit hooks ---------------------------------------------------------
+# Side effects that must only happen once data is durable (for example handing a
+# job to Celery) are registered on the session and run after a successful commit.
+# They are dropped on rollback. If one fails, sweepers recover from the stored row.
+
+_AFTER_COMMIT_KEY = "xplo_after_commit"
+_background: set[asyncio.Task[None]] = set()
+
+
+def run_after_commit(session: AsyncSession, fn: Callable[[], Awaitable[None]]) -> None:
+    session.sync_session.info.setdefault(_AFTER_COMMIT_KEY, []).append(fn)
+
+
+@event.listens_for(Session, "after_commit")
+def _run_after_commit(sync_session: Session) -> None:
+    callbacks = sync_session.info.pop(_AFTER_COMMIT_KEY, [])
+    if not callbacks:
+        return
+    loop = asyncio.get_running_loop()
+    for fn in callbacks:
+        task = loop.create_task(fn())
+        _background.add(task)
+        task.add_done_callback(_background.discard)
+
+
+@event.listens_for(Session, "after_rollback")
+def _drop_after_commit(sync_session: Session) -> None:
+    sync_session.info.pop(_AFTER_COMMIT_KEY, None)
+
+
+async def drain_after_commit() -> None:
+    """Wait for pending after-commit callbacks (tests and graceful shutdown)."""
+    while _background:
+        await asyncio.gather(*list(_background), return_exceptions=True)

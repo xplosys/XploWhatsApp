@@ -113,3 +113,105 @@ export interface Page<T> {
   limit: number;
   offset: number;
 }
+
+// ---- WhatsApp (Phase 2) ----
+
+export interface SignupConfig {
+  enabled: boolean;
+  app_id: string | null;
+  config_id: string | null;
+  graph_api_version: string;
+  embedded_signup_version: string;
+  missing: string[];
+}
+
+export interface HealthIssue {
+  code: string;
+  level: "error" | "warning" | "info";
+  message: string;
+  at: string;
+}
+
+export interface WhatsAppNumber {
+  id: string;
+  phone_number_id: string;
+  display_phone_number: string | null;
+  verified_name: string | null;
+  quality_rating: string | null;
+  messaging_limit_tier: string | null;
+  name_status: string | null;
+  meta_status: string | null;
+  status: "connected" | "pending" | "disconnected";
+  is_coexistence: boolean;
+  registered_at: string | null;
+}
+
+export interface WhatsAppAccount {
+  id: string;
+  waba_id: string;
+  meta_business_id: string | null;
+  name: string | null;
+  currency: string | null;
+  status: "connected" | "needs_reconnect" | "disconnected";
+  health: "ok" | "warning" | "error" | "unknown";
+  health_issues: HealthIssue[];
+  last_health_check_at: string | null;
+  connected_at: string | null;
+  disconnected_at: string | null;
+  templates_synced_at: string | null;
+  numbers: WhatsAppNumber[];
+}
+
+export interface MessageTemplate {
+  id: string;
+  account_id: string;
+  name: string;
+  language: string;
+  category: string | null;
+  status: string;
+  rejected_reason: string | null;
+  components: { type: string; text?: string; format?: string }[];
+  last_synced_at: string | null;
+}
+
+export interface Contact {
+  id: string;
+  wa_id: string | null;
+  phone_e164: string | null;
+  bsuid: string | null;
+  username: string | null;
+  profile_name: string | null;
+  name: string | null;
+  consent_status: "unknown" | "opted_in" | "opted_out";
+  consent_updated_at: string | null;
+  last_inbound_at: string | null;
+}
+
+export interface Conversation {
+  id: string;
+  contact: Contact;
+  number_id: string;
+  number_display: string | null;
+  status: "open" | "closed";
+  unread_count: number;
+  last_inbound_at: string | null;
+  last_message_at: string | null;
+  service_window_expires_at: string | null;
+  service_window_open: boolean;
+  last_message_preview: string | null;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  direction: "inbound" | "outbound";
+  sender_type: "contact" | "agent" | "ai" | "system";
+  type: string;
+  body: string | null;
+  status: string;
+  error_code: string | null;
+  error_message: string | null;
+  pricing_category: string | null;
+  wa_timestamp: string | null;
+  created_at: string;
+}

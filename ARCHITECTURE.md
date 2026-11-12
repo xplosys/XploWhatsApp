@@ -826,7 +826,7 @@ Full detail, including the approval sequence and what can be built before approv
 |---|---|---|
 | 001 | Modular monolith with Celery worker process types, one image | Accepted |
 | 002 | Tenant isolation by RLS with `FORCE`, non-owner app role, transaction-local `app.tenant_id` | Accepted |
-| 003 | Webhook persist-then-ack with transactional inbox/outbox and sweeper | Proposed |
+| 003 | Webhook persist-then-ack with transactional inbox/outbox and sweeper | Accepted (Phase 2) |
 | 004 | Per-conversation advisory lock plus debounce for ordering | Proposed |
 | 005 | Celery tasks run async code on a per-process event loop | Accepted |
 | 006 | Envelope encryption with versioned KEKs from env | Accepted |
@@ -840,5 +840,9 @@ Full detail, including the approval sequence and what can be built before approv
 | 014 | Python deps via `uv`, frontend via `pnpm` | Accepted |
 | 015 | Frontend calls same-origin `/api` (Next rewrites in dev, Nginx in prod) so the refresh cookie is first-party | Accepted |
 | 016 | Visual theme follows xplosys.com (Plus Jakarta Sans, indigo-violet-cyan gradient, light/dark) via one token file | Accepted |
+| 017 | Outbound sends are at most once: a job is committed as `sending` before the Meta call, and a stale `sending` job becomes `unknown` (message failed with `send_outcome_unknown`) instead of being resent | Accepted (Phase 2) |
+| 018 | Contacts are identified by business-scoped user ID or phone number (at least one required, each unique per tenant); BSUID is matched first | Accepted (Phase 2) |
+| 019 | Celery dispatch happens only after the database commit (`run_after_commit`); the beat sweeper covers broker outages and crashes | Accepted (Phase 2) |
+| 020 | Webhook routing and cross-tenant sweeps use SECURITY DEFINER functions owned by `xplo_definer` that return only IDs and tenant IDs; `webhook_events.tenant_id` is nullable so unroutable events are kept | Accepted (Phase 2) |
 
 Each will be written up under `docs/adr/` as it is implemented.

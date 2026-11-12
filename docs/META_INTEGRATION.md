@@ -1,6 +1,6 @@
 # Meta WhatsApp integration: requirements and approval dependencies
 
-**Last checked against Meta documentation:** 2026-11-12. Meta changes this area often. Every value below that comes from Meta (API version, Embedded Signup version, permission names, webhook fields) must be re-checked against the official docs at the start of Phase 2. Nothing here should be treated as permanent.
+**Last checked against Meta documentation:** 2026-11-12 (re-checked at the start of Phase 2). Meta changes this area often. Every value below that comes from Meta (API version, Embedded Signup version, permission names, webhook fields) is configurable and should be re-checked before each release.
 
 Primary sources:
 - Embedded Signup overview and implementation: https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/implementation/
@@ -14,12 +14,13 @@ Primary sources:
 
 | Item | Current state | What we do |
 |---|---|---|
-| Graph API version | Meta examples use `v25.0`; some onboarding examples still show `v21.0` | `META_GRAPH_API_VERSION` env var, default to the latest stable at Phase 2 start |
-| Embedded Signup | v2 and v3 deprecated 15 Oct 2026 (requests now served as v4). v4 is the migration target. v5 introduced 20 Oct 2026 | Build on v4; evaluate v5 at Phase 2 start |
+| Graph API version | `v25.0` is current | `META_GRAPH_API_VERSION`, default `v25.0` |
+| Embedded Signup | v2 and v3 deprecated 15 Oct 2026 (served as v4). v5 introduced 20 Oct 2026 and turns WhatsApp Business app onboarding (coexistence) on by default | `META_EMBEDDED_SIGNUP_VERSION`, default `v4`. Setting `v5` passes `extras.version`. Coexistence numbers are recorded and not re-registered |
 | ESU v4 configuration | Products (Cloud API, Marketing Messages, Click-to-WhatsApp Ads, Conversions API) are selected in the Facebook Login for Business configuration. `extras` is `{ setup: {} }` | Products chosen in Meta App Dashboard; frontend passes only `config_id` |
 | ESU completion | Users may finish with a verified number, an unverified number, or no number | Onboarding must handle a missing `phone_number_id` and let the tenant add a number later |
 | Exchangeable code | Returned in `authResponse.code`, roughly 30 second lifetime | Frontend posts it to the backend immediately; backend exchanges at once |
 | Pricing | Per-message pricing since 1 July 2025 (marketing, utility, authentication, service) | Versioned rate table, no hard-coded prices |
+| Business-scoped user IDs | Webhooks carry `user_id` (BSUID) and may omit the phone number for users with a username. Sends can target `recipient` (BSUID) instead of `to`. Authentication templates still need a phone (error 131062) | Contacts keyed on BSUID or phone; replies use whichever is known; `user_changed_user_id` handled |
 | AI chatbot policy | From 15 Jan 2026, general-purpose AI chatbots (where the AI is the product) are prohibited on the Business API. Business-specific assistants are allowed | Assistants are scoped to the tenant's business; see ARCHITECTURE.md §1.4 |
 
 ---
@@ -82,3 +83,25 @@ Tech Providers do not share a credit line. That is a Solution Partner step and i
 - Quality rating and messaging limits per number.
 - Business-scoped AI only (no general-purpose assistant behaviour), with a path to a human.
 - No unofficial APIs, WhatsApp Web automation or scraping.
+
+## 7. Configure XploWhatsApp for a Meta app
+
+Set these in `.env` (all are read at start-up; nothing is hard-coded):
+
+| Variable | Where it comes from |
+|---|---|
+| `META_APP_ID`, `META_APP_SECRET` | App Dashboard → App settings → Basic |
+| `META_EMBEDDED_SIGNUP_CONFIG_ID` | Facebook Login for Business → Configurations (WhatsApp Embedded Signup) |
+| `META_WEBHOOK_VERIFY_TOKEN` | Any long random string; enter the same value in the webhook settings |
+| `META_EMBEDDED_SIGNUP_VERSION` | `v4` (default) or `v5` |
+| `META_GRAPH_API_VERSION` | `v25.0` (default) |
+
+Then in the App Dashboard:
+
+1. WhatsApp → Configuration → Webhook: callback URL `https://<your API host>/api/v1/webhooks/whatsapp`, the verify token above, and subscribe to `messages`, `account_update`, `message_template_status_update`, `template_category_update` and `phone_number_quality_update`. Meta needs a public HTTPS URL; for local testing use a tunnel to port 8000.
+2. Facebook Login for Business → Settings: add the app's domain to Allowed Domains for the JavaScript SDK and to Valid OAuth Redirect URIs (HTTPS only).
+3. Until App Review is approved, only people with a role on the app can complete Embedded Signup, and only Meta's test number and registered recipients work.
+
+The WhatsApp page in the app lists any missing setting instead of offering a Connect button that cannot work.
+
+Endpoints XploWhatsApp calls: `GET /oauth/access_token`, `GET /debug_token`, `GET /{waba_id}`, `GET /{waba_id}/phone_numbers`, `POST|GET|DELETE /{waba_id}/subscribed_apps`, `POST /{phone_number_id}/register`, `POST /{phone_number_id}/messages`, `GET /{waba_id}/message_templates`.

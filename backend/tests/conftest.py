@@ -22,6 +22,8 @@ PG_IMAGE = "pgvector/pgvector:pg17"
 REDIS_IMAGE = "redis:7.4-alpine"
 CSRF = {"X-Requested-With": "XploWhatsApp"}
 PASSWORD = "Correct-Horse-42!"
+META_APP_ID = "1234567890"
+META_APP_SECRET = "test-app-secret"
 
 
 @pytest.fixture(scope="session")
@@ -47,6 +49,12 @@ def containers() -> Iterator[dict[str, str]]:
             "COOKIE_SECURE": "false",
             "RATE_LIMIT_AUTH_PER_MINUTE": "10000",
             "FRONTEND_BASE_URL": "http://app.test",
+            "TASK_DISPATCH": "memory",
+            "META_APP_ID": META_APP_ID,
+            "META_APP_SECRET": META_APP_SECRET,
+            "META_WEBHOOK_VERIFY_TOKEN": "verify-me",
+            "META_EMBEDDED_SIGNUP_CONFIG_ID": "cfg-123",
+            "META_GRAPH_API_VERSION": "v25.0",
         }
         os.environ.update(env)
         yield env
@@ -130,9 +138,11 @@ async def clean_state(request: pytest.FixtureRequest) -> AsyncIterator[None]:
         await conn.close()
     from app.core.redis import get_redis
     from app.modules.notifications.email import OUTBOX
+    from app.workers.dispatch import DISPATCHED
 
     await get_redis().flushdb()
     OUTBOX.clear()
+    DISPATCHED.clear()
     yield
 
 
