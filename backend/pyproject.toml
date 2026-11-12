@@ -49,6 +49,7 @@ ignore = ["S101", "B008", "RUF012", "S105", "S106", "S107"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S311", "S608"]  # table names in SQL come from model metadata
 "alembic/**" = ["E501"]
+"tests/isolation/**" = ["E501"]  # raw SQL fixtures read better unwrapped
 
 [tool.mypy]
 python_version = "3.12"

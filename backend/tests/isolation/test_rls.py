@@ -21,6 +21,7 @@ from app.db.session import app_transaction
 from tests.conftest import RegisterFn
 
 API = "/api/v1"
+APPEND_ONLY = {"audit_logs", "webhook_events", "whatsapp_credentials"}
 
 
 def _tenant_tables() -> dict[str, str]:
@@ -96,7 +97,108 @@ INSERTS: dict[str, Callable[[uuid.UUID, uuid.UUID, uuid.UUID], tuple[str, dict[s
         "INSERT INTO audit_logs (id, tenant_id, action, occurred_at) VALUES (:id, :t, 'forged', now())",
         {"id": uuid.uuid4(), "t": t},
     ),
+    "whatsapp_accounts": lambda t, u, p: (
+        "INSERT INTO whatsapp_accounts (id, tenant_id, waba_id, status, health) "
+        "VALUES (:id, :t, :w, 'connected', 'ok')",
+        {"id": uuid.uuid4(), "t": t, "w": uuid.uuid4().hex[:12]},
+    ),
+    "whatsapp_numbers": lambda t, u, p: (
+        "INSERT INTO whatsapp_numbers (id, tenant_id, account_id, phone_number_id, status) "
+        "VALUES (:id, :t, :id, :pn, 'connected')",
+        {"id": uuid.uuid4(), "t": t, "pn": uuid.uuid4().hex[:12]},
+    ),
+    "whatsapp_credentials": lambda t, u, p: (
+        "INSERT INTO whatsapp_credentials (id, tenant_id, account_id, kind) VALUES (:id, :t, :id, 'business_token')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "message_templates": lambda t, u, p: (
+        "INSERT INTO message_templates (id, tenant_id, account_id, name, language, status) "
+        "VALUES (:id, :t, :id, 'x', 'en', 'APPROVED')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "contacts": lambda t, u, p: (
+        "INSERT INTO contacts (id, tenant_id, wa_id, consent_status) VALUES (:id, :t, '91999', 'unknown')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "conversations": lambda t, u, p: (
+        "INSERT INTO conversations (id, tenant_id, contact_id, number_id, status) VALUES (:id, :t, :id, :id, 'open')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "messages": lambda t, u, p: (
+        "INSERT INTO messages (id, tenant_id, conversation_id, direction, sender_type, type, status) "
+        "VALUES (:id, :t, :id, 'inbound', 'contact', 'text', 'received')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "webhook_events": lambda t, u, p: (
+        "INSERT INTO webhook_events (id, tenant_id, source, field, dedup_key, payload, status, attempts, "
+        "received_at, next_attempt_at) VALUES (:id, :t, 'whatsapp', 'messages', :k, '{}', 'pending', 0, now(), now())",
+        {"id": uuid.uuid4(), "t": t, "k": uuid.uuid4().hex},
+    ),
+    "webhook_outbox": lambda t, u, p: (
+        "INSERT INTO webhook_outbox (id, tenant_id, kind, aggregate_id, idempotency_key, payload, status, "
+        "attempts, created_at, next_attempt_at) VALUES (:id, :t, 'send_message', :id, :k, '{}', 'pending', 0, "
+        "now(), now())",
+        {"id": uuid.uuid4(), "t": t, "k": uuid.uuid4().hex},
+    ),
 }
+
+
+async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
+    """One row in every WhatsApp table for the given tenant, written as that tenant."""
+    acc, num, contact, conv = (uuid.uuid4() for _ in range(4))
+    statements = [
+        (
+            "INSERT INTO whatsapp_accounts (id, tenant_id, waba_id, status, health) "
+            "VALUES (:acc, :t, :w, 'connected', 'ok')",
+            {"w": uuid.uuid4().hex[:12]},
+        ),
+        (
+            "INSERT INTO whatsapp_numbers (id, tenant_id, account_id, phone_number_id, status) "
+            "VALUES (:num, :t, :acc, :pn, 'connected')",
+            {"pn": uuid.uuid4().hex[:12]},
+        ),
+        (
+            "INSERT INTO whatsapp_credentials (id, tenant_id, account_id, kind, ciphertext) "
+            "VALUES (gen_random_uuid(), :t, :acc, 'business_token', 'xenc1.x')",
+            {},
+        ),
+        (
+            "INSERT INTO message_templates (id, tenant_id, account_id, name, language, status) "
+            "VALUES (gen_random_uuid(), :t, :acc, 'hello', 'en', 'APPROVED')",
+            {},
+        ),
+        (
+            "INSERT INTO contacts (id, tenant_id, wa_id, consent_status) VALUES (:contact, :t, '9198', 'unknown')",
+            {},
+        ),
+        (
+            "INSERT INTO conversations (id, tenant_id, contact_id, number_id, status) "
+            "VALUES (:conv, :t, :contact, :num, 'open')",
+            {},
+        ),
+        (
+            "INSERT INTO messages (id, tenant_id, conversation_id, direction, sender_type, type, status) "
+            "VALUES (gen_random_uuid(), :t, :conv, 'inbound', 'contact', 'text', 'received')",
+            {},
+        ),
+        (
+            "INSERT INTO webhook_events (id, tenant_id, source, field, dedup_key, payload, status, attempts, "
+            "received_at, next_attempt_at) VALUES (gen_random_uuid(), :t, 'whatsapp', 'messages', :k, '{}', "
+            "'processed', 1, now(), now())",
+            {"k": uuid.uuid4().hex},
+        ),
+        (
+            "INSERT INTO webhook_outbox (id, tenant_id, kind, aggregate_id, idempotency_key, payload, status, "
+            "attempts, created_at, next_attempt_at) VALUES (gen_random_uuid(), :t, 'send_message', :conv, :k, "
+            "'{}', 'done', 1, now(), now())",
+            {"k": uuid.uuid4().hex},
+        ),
+    ]
+    async with app_transaction(tenant_id) as s:
+        for sql, extra in statements:
+            await s.execute(
+                text(sql), {"t": tenant_id, "acc": acc, "num": num, "contact": contact, "conv": conv, **extra}
+            )
 
 
 @pytest.fixture
@@ -106,6 +208,7 @@ async def two_tenants(register: RegisterFn) -> tuple[uuid.UUID, uuid.UUID, uuid.
     # Give tenant B rows in every tenant table.
     await b.put(f"{API}/tenants/current", json={"name": "Two Ltd"})
     await b.post(f"{API}/tenants/current/invitations", json={"email": "agent@two.in", "role": "agent"})
+    await _seed_whatsapp_rows(uuid.UUID(b.tenant_id))
     return uuid.UUID(a.tenant_id), uuid.UUID(b.tenant_id), uuid.UUID(a.user_id), uuid.UUID(b.user_id)
 
 
@@ -120,7 +223,9 @@ async def test_tenant_cannot_see_or_change_other_tenant_rows(two_tenants) -> Non
         async with app_transaction(tenant_a, user_a) as s:
             seen = await s.scalar(text(f"SELECT count(*) FROM {table} WHERE {col} = :b"), {"b": tenant_b})
         assert seen == 0, f"tenant A can read tenant B rows in {table}"
-        if table != "audit_logs":  # app role has no UPDATE/DELETE on audit_logs at all (tested below)
+        # The app role has no UPDATE/DELETE on audit_logs and no DELETE on webhook_events
+        # or credentials at all (tested below); RLS is still checked for every other action.
+        if table != "audit_logs":
             async with app_transaction(tenant_a, user_a) as s:
                 updated = (
                     await s.execute(
@@ -128,6 +233,7 @@ async def test_tenant_cannot_see_or_change_other_tenant_rows(two_tenants) -> Non
                     )
                 ).rowcount  # type: ignore[attr-defined]
             assert updated == 0, f"tenant A can update tenant B rows in {table}"
+        if table not in APPEND_ONLY:
             async with app_transaction(tenant_a, user_a) as s:
                 deleted = (
                     await s.execute(text(f"DELETE FROM {table} WHERE {col} = :b"), {"b": tenant_b})
@@ -204,3 +310,11 @@ async def test_api_cannot_reach_other_tenant_resources_by_id(register: RegisterF
     assert all(
         log["action"] != "invitation.created" for log in (await a.get(f"{API}/audit-logs")).json()["items"]
     )
+
+
+@pytest.mark.parametrize("table", ["webhook_events", "whatsapp_credentials"])
+async def test_app_role_cannot_delete_webhook_events_or_credentials(two_tenants, table: str) -> None:  # type: ignore[no-untyped-def]
+    _, tenant_b, _, _ = two_tenants
+    with pytest.raises(DBAPIError, match="permission denied"):
+        async with app_transaction(tenant_b) as s:
+            await s.execute(text(f"DELETE FROM {table}"))

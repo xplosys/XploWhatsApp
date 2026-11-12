@@ -22,6 +22,11 @@ class Environment(StrEnum):
     PRODUCTION = "production"
 
 
+class TaskDispatch(StrEnum):
+    CELERY = "celery"
+    MEMORY = "memory"  # tests: record jobs instead of sending them to the broker
+
+
 class EmailBackend(StrEnum):
     CONSOLE = "console"
     MEMORY = "memory"
@@ -97,12 +102,44 @@ class Settings(BaseSettings):
 
     sentry_dsn: SecretStr | None = None
 
-    @field_validator("cors_allowed_origins", mode="before")
+    # Background jobs
+    task_dispatch: TaskDispatch = TaskDispatch.CELERY
+
+    # Meta WhatsApp Cloud API. Every Meta-defined value is configuration, not code:
+    # re-check against Meta's changelog when upgrading.
+    meta_app_id: str | None = None
+    meta_app_secret: SecretStr | None = None
+    meta_webhook_verify_token: SecretStr | None = None
+    meta_embedded_signup_config_id: str | None = None
+    # Embedded Signup flow version sent in FB.login extras ("v4" uses products from the
+    # Login for Business configuration; "v5" adds WhatsApp Business app onboarding).
+    meta_embedded_signup_version: str = "v4"
+    meta_graph_api_version: str = "v25.0"
+    meta_graph_base_url: str = "https://graph.facebook.com"
+    meta_http_timeout_seconds: float = 15.0
+    # Customer-service window for free-form messages, per Meta policy.
+    whatsapp_service_window_hours: int = 24
+    whatsapp_opt_out_keywords: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["stop", "unsubscribe", "stop all", "opt out", "optout"]
+    )
+    whatsapp_opt_in_keywords: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["start", "subscribe", "opt in", "unstop"]
+    )
+    webhook_max_attempts: int = 8
+    outbox_max_attempts: int = 8
+
+    @field_validator(
+        "cors_allowed_origins", "whatsapp_opt_out_keywords", "whatsapp_opt_in_keywords", mode="before"
+    )
     @classmethod
-    def _split_origins(cls, value: object) -> object:
+    def _split_csv(cls, value: object) -> object:
         if isinstance(value, str):
             return [v.strip() for v in value.split(",") if v.strip()]
         return value
+
+    @property
+    def meta_embedded_signup_enabled(self) -> bool:
+        return bool(self.meta_app_id and self.meta_app_secret and self.meta_embedded_signup_config_id)
 
     @property
     def is_production_like(self) -> bool:
@@ -120,6 +157,8 @@ class Settings(BaseSettings):
                 raise ValueError("COOKIE_SECURE must be true outside development")
             if self.email_backend != EmailBackend.SMTP:
                 raise ValueError("EMAIL_BACKEND must be smtp outside development")
+            if self.task_dispatch != TaskDispatch.CELERY:
+                raise ValueError("TASK_DISPATCH must be celery outside development")
         return self
 
     @property

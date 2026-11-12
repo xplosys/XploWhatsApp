@@ -5,6 +5,8 @@ from typing import Any
 from celery import Celery
 from celery.signals import worker_process_init
 
+# Workers load models module by module; import the registry so every foreign key resolves.
+import app.db.models  # noqa: F401
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -28,6 +30,7 @@ celery_app.conf.update(
     task_routes={
         "app.workers.tasks.notifications.*": {"queue": "default"},
         "app.workers.tasks.maintenance.*": {"queue": "default"},
+        "app.workers.tasks.whatsapp.*": {"queue": "default"},
         "app.workers.tasks.messages.*": {"queue": "messages"},
         "app.workers.tasks.knowledge.*": {"queue": "knowledge"},
     },
@@ -36,8 +39,22 @@ celery_app.conf.update(
             "task": "app.workers.tasks.maintenance.purge_expired_auth_tokens",
             "schedule": 6 * 3600.0,
         },
+        "sweep-whatsapp-queues": {
+            "task": "app.workers.tasks.whatsapp.sweep_queues",
+            "schedule": 30.0,
+        },
+        "check-whatsapp-accounts": {
+            "task": "app.workers.tasks.whatsapp.check_all_accounts",
+            "schedule": 24 * 3600.0,
+        },
     },
-    include=["app.workers.tasks.notifications", "app.workers.tasks.maintenance", "app.workers.tasks.system"],
+    include=[
+        "app.workers.tasks.notifications",
+        "app.workers.tasks.maintenance",
+        "app.workers.tasks.system",
+        "app.workers.tasks.messages",
+        "app.workers.tasks.whatsapp",
+    ],
 )
 
 

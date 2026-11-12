@@ -1,15 +1,15 @@
 # XploWhatsApp — project status
 
 **Last updated:** 2026-11-12
-**Current phase:** Phase 1 complete, awaiting approval to start Phase 2 (Meta WhatsApp integration)
+**Current phase:** Phase 2 complete, awaiting approval to start Phase 3 (AI provider orchestration)
 
 ## Phase tracker
 
 | Phase | Status | Notes |
 |---|---|---|
 | 0. Architecture and planning | Done (approved 2026-11-12) | ARCHITECTURE.md, docs/META_INTEGRATION.md, docs/IMPLEMENTATION_PLAN.md |
-| 1. Foundation | Done, awaiting review | See below |
-| 2. Meta WhatsApp integration | Not started | Start Meta business verification and Tech Provider process now |
+| 1. Foundation | Done (PR #1) | See Phase 1 report |
+| 2. Meta WhatsApp integration | Done, awaiting review | See Phase 2 report. Going live needs Meta App Review and Tech Provider approval |
 | 3. AI provider orchestration | Not started | |
 | 4. RAG knowledge engine | Not started | |
 | 5. Conversation management | Not started | |
@@ -18,6 +18,37 @@
 | 8. Security hardening | Not started | |
 | 9. Monitoring and deployment | Not started | |
 | 10. Production testing and release | Not started | |
+
+## Phase 2 report
+
+### What is complete
+
+- **Data model (migration 0002):** `whatsapp_accounts`, `whatsapp_numbers`, `whatsapp_credentials` (envelope-encrypted, AAD bound to tenant, account and kind), `message_templates`, `contacts`, `conversations`, `messages`, `webhook_events` (inbox) and `webhook_outbox`. RLS is enabled and forced on all of them, with composite tenant foreign keys. The app role cannot delete webhook events or credentials. WABA IDs and phone number IDs are unique across the platform, so one WhatsApp account can only belong to one business.
+- **Webhook receiver** at `/api/v1/webhooks/whatsapp`: GET verification with the verify token, POST with `X-Hub-Signature-256` checked over the raw body in constant time, 3 MB body limit. Each change is stored before we answer 200 (persist-then-ack), deduplicated by a hash of its content, routed to the tenant by phone number ID (falling back to WABA ID) through narrow SECURITY DEFINER lookups, and processed by a worker. Unknown numbers are kept as `unroutable` for support.
+- **Processing:** inbound messages of every type (text, media, location, contacts, buttons, lists, reactions, unsupported), statuses with monotonic ordering (a late `delivered` never overwrites `read`; `failed` is final; a status that arrives before its message is retried), template status and category changes, quality updates, account updates (app uninstalled, account deleted, policy violations) and number or user-ID changes.
+- **Business-scoped user IDs (BSUID):** Meta now sends `user_id` and may omit the phone number for users with a username. Contacts are matched on BSUID first and then phone. Replies go to `recipient` when no phone is known; authentication templates are blocked without a phone, as Meta requires.
+- **Sending:** a transactional outbox. The API stores the message and job in one transaction and dispatches after commit; a beat sweeper re-dispatches anything missed. Sending is at most once: a job is marked `sending` before the Meta call, and a job stuck in `sending` is marked `unknown` and its message failed with `send_outcome_unknown` rather than risking a duplicate. Rate limits and server errors retry with backoff; a token error moves the account to `needs_reconnect`.
+- **Policy engine v1:** blocks sending when the account needs reconnecting or the number is not connected, when the contact opted out, outside the 24-hour window unless it is an approved template in the right language, marketing templates without opt-in or on a RED-quality number, and authentication templates without a phone number. STOP / START keywords (configurable) update consent.
+- **Embedded Signup:** the browser runs Meta's popup with the Facebook JS SDK; the backend exchanges the code at once and checks everything itself (`debug_token` validity, app ID, scopes, granular WABA targets, the WABA and number really belong to that token, and neither is connected to another business). It then subscribes our app, registers the number with a generated 6-digit PIN (stored encrypted, viewable by admins with an audit entry), or marks it as a WhatsApp Business app number when coexistence is used. A one-time onboarding session in Redis ties the code to the signed-in user and business. The plan's number limit is enforced.
+- **Account health:** daily and on-demand checks of token validity, webhook subscription (re-subscribes if missing), number status, quality and messaging limit, and numbers removed from the WABA. Reconnect runs Embedded Signup again for the same WABA. Disconnect unsubscribes the app and revokes stored credentials. Template sync is paginated and marks templates deleted at Meta as `DELETED`.
+- **Frontend:** a WhatsApp page (connect, reconnect, health badges and issues, numbers with quality, limit and status, register a number, show PIN, health check, template sync, disconnect, send a message) and a Conversations page (conversation list with unread counts and reply-window state, message thread with delivery status and failure reasons, text replies inside the window, template replies with placeholder values outside it, consent controls). Missing Meta settings are listed instead of showing a button that cannot work.
+
+### Tests
+
+- Backend: 113 tests, all passing, against real PostgreSQL + pgvector and Redis. About 30 integration tests run the whole flow against a fake Graph API that answers Meta's documented endpoints: onboarding success and every rejection, webhook verification and signatures, dedup, BSUID-only contacts, STOP and START, sending in and out of the window, statuses in any order, retries, token revocation and reconnect, stale jobs, the sweeper, health checks, account updates, disconnect, the plan limit and cross-tenant access. Isolation tests cover every new table. A worker test checks that a fresh worker process can resolve every model.
+- `ruff`, `mypy --strict`, `eslint`, `tsc` and `next build`: clean.
+- Browser walkthrough against the running stack with a fake Meta: register, connect WhatsApp through the Embedded Signup flow, sync templates, receive a signed inbound webhook, see the conversation, reply, watch the status change to Delivered, record opt-in, and send a template. This run found and fixed a bug where the worker had not loaded every model and could not save inbound messages.
+
+### Not verified here
+
+- Real Meta. Everything above ran against a fake Graph API built from Meta's documentation. The first real test needs the Meta app set up (see docs/META_INTEGRATION.md §7) and someone with a role on the app, using Meta's test number.
+
+### Known limitations of Phase 2
+
+- Inbound media IDs are stored but files are not downloaded yet (object storage arrives with Phase 5).
+- Meta's pricing category is recorded per message; cost estimates come with billing in Phase 7.
+- The dashboard refreshes conversations every few seconds; live updates over a socket come in Phase 5.
+- Template creation and editing from the dashboard is Phase 5/6; templates are created in WhatsApp Manager for now.
 
 ## Phase 1 report
 
@@ -45,7 +76,7 @@
 
 ## Open decisions (need the owner's input)
 
-1. Approve Phase 1 and start Phase 2.
+1. Approve Phase 2 and start Phase 3.
 2. Production object storage provider (decided by Phase 9).
 3. Billing entity for UK/US customers (affects Stripe).
 4. Legal review of Meta's WhatsApp Business Solution Terms for AI use, and of DPDP/GDPR obligations.

@@ -27,6 +27,8 @@ docker compose up -d --build
 
 The one-shot `migrate` service creates the database roles, runs migrations and seeds the plan catalogue on every start (idempotent).
 
+To connect WhatsApp, fill in the `META_*` lines in `.env` (see docs/META_INTEGRATION.md §7 for where each value comes from and how to set up the webhook). Without them the WhatsApp page lists what is missing.
+
 Create a Super Admin (they must turn on two-factor authentication before using the admin console):
 
 ```bash
