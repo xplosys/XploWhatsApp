@@ -1,0 +1,11 @@
+# Gitleaks configuration: the default rules, plus an allowlist for the fake keys that
+# tests use on purpose (they are made up and never valid anywhere). Real code, config
+# and docs are scanned in full.
+title = "XploWhatsApp"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Made-up keys in test fixtures"
+paths = ['''^backend/tests/''']
