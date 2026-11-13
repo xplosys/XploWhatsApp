@@ -2,7 +2,8 @@
 # and docs are scanned in full. Either condition below allows a finding:
 # - made-up keys in test fixtures (never valid anywhere);
 # - a "secret" that is only an ALL_CAPS variable name: an empty KEY= line in
-#   .env.example, where the generic rule reads the next line's name as the value.
+#   .env.example, where the generic rule reads the next line (NAME=short default)
+#   as the value.
 title = "XploWhatsApp"
 
 [extend]
@@ -12,4 +13,4 @@ useDefault = true
 description = "Test fixtures, and variable names read as values"
 paths = ['''^backend/tests/''']
 regexTarget = "secret"
-regexes = ['''^[A-Z][A-Z0-9_]+$''']
+regexes = ['''^[A-Z][A-Z0-9_]+(=[A-Za-z0-9.]{0,8})?$''']
