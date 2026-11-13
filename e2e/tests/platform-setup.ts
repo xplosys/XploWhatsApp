@@ -4,6 +4,7 @@
  * the provider, price the chat model, and switch the chat and embedding models on.
  */
 import { execSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { API_URL, CSRF, FAKES_URL, json, totp } from "./support";
 
 // How to run the backend CLI. CI and a local Docker stack use the default.
@@ -62,6 +63,9 @@ export default async function platformSetup() {
       await fetch(`${API_URL}/api/v1${path}`, { method, headers: admin, body: body ? JSON.stringify(body) : undefined }),
       `${method} ${path}`,
     );
+
+  // For steps that need the operator (the load test's allowance), valid 15 minutes.
+  writeFileSync(`${__dirname}/../.platform.json`, JSON.stringify({ adminToken: session.access_token }), { mode: 0o600 });
 
   await call("POST", "/admin/ai/models/sync", { provider: "gemini" });
   const models: any[] = await call("GET", "/admin/ai/models");

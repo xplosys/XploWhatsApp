@@ -30,6 +30,7 @@ services:
       META_APP_SECRET: e2e-app-secret
       E2E_WEBHOOK_URL: http://api:8000/api/v1/webhooks/whatsapp
       E2E_DEFAULT_AI_ANSWER: ${E2E_DEFAULT_AI_ANSWER:-}
+      E2E_AI_LATENCY_MS: ${E2E_AI_LATENCY_MS:-0}
     command: ["uvicorn", "--app-dir", "/e2e/fakes", "server:app", "--host", "0.0.0.0", "--port", "9000"]
     volumes:
       - ./backend/tests:/app/tests:ro

@@ -75,3 +75,31 @@ def test_worker_process_sees_every_model() -> None:
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)  # noqa: S603
     assert result.returncode == 0, result.stderr
+
+
+def test_ai_calls_have_their_own_queue() -> None:
+    """AI tasks wait seconds on the provider; they must not hold up webhooks or sends,
+    and every queue a task can land on is consumed by a worker in both compose files."""
+    from pathlib import Path
+
+    from app.core.metrics import QUEUES
+    from app.workers.celery_app import celery_app
+
+    def queue(task: str) -> str:
+        return str(celery_app.amqp.router.route({}, f"app.workers.tasks.{task}")["queue"].name)
+
+    assert queue("messages.ai_auto_reply") == "ai"
+    assert queue("messages.summarise_conversation") == "ai"
+    assert queue("messages.process_webhook_event") == "messages"
+    assert queue("messages.send_outbox_job") == "messages"
+    assert queue("knowledge.ingest_version") == "knowledge"
+    root = Path(__file__).resolve().parents[3]
+    for compose in ("docker-compose.yml", "docker-compose.prod.yml"):
+        text = (root / compose).read_text()
+        consumed = {
+            q
+            for line in text.splitlines()
+            if '"-Q"' in line
+            for q in line.split('"-Q", "')[1].split('"')[0].split(",")
+        }
+        assert consumed == set(QUEUES), (compose, consumed)

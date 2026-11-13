@@ -17,9 +17,12 @@ Never point a production deployment at this.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import random
+import re
+import secrets
+import statistics
 import time
 from typing import Any
 
@@ -35,6 +38,8 @@ APP_SECRET = os.environ.get("META_APP_SECRET", "e2e-app-secret")
 WEBHOOK_URL = os.environ.get("E2E_WEBHOOK_URL", "http://api:8000/api/v1/webhooks/whatsapp")
 # Answer chat calls with this when no answer is queued (load tests); unset: fail loudly.
 DEFAULT_ANSWER = os.environ.get("E2E_DEFAULT_AI_ANSWER")
+# How long a chat answer takes, like a real model (load tests); embeddings stay instant.
+AI_LATENCY_SECONDS = float(os.environ.get("E2E_AI_LATENCY_MS", "0")) / 1000
 
 PROVIDER_HOSTS = {provider: host for host, provider in HOSTS.items()}
 
@@ -46,7 +51,7 @@ client = httpx.AsyncClient(timeout=10)
 def _new_ids() -> tuple[str, str]:
     """Fresh WhatsApp account and number IDs, so each run onboards a number no earlier
     run has claimed (a number can belong to one business only)."""
-    return str(random.randint(10**14, 10**15 - 1)), str(random.randint(10**14, 10**15 - 1))
+    return str(10**14 + secrets.randbelow(9 * 10**14)), str(10**14 + secrets.randbelow(9 * 10**14))
 
 
 def reset() -> None:
@@ -65,7 +70,17 @@ def reset() -> None:
             "components": [{"type": "BODY", "text": "Hi {{1}}, your appointment is on {{2}}."}],
         }
     ]
-    state.update(meta=meta, ai=FakeAI(), waba_id=waba_id, phone_id=phone_id, inbound=0)
+    state.update(
+        meta=meta,
+        ai=FakeAI(),
+        waba_id=waba_id,
+        phone_id=phone_id,
+        inbound=0,
+        # For load tests: when each customer last wrote, and how long their reply took.
+        waiting={},
+        reply_seconds=[],
+        ack_ms=[],
+    )
 
 
 reset()
@@ -84,7 +99,14 @@ async def _forward(handler: Any, request: Request, url: httpx.URL) -> Response:
 @app.api_route("/graph/{path:path}", methods=["GET", "POST", "DELETE"])
 async def graph(path: str, request: Request) -> Response:
     url = httpx.URL(f"https://graph.facebook.com/{path}", params=request.url.query)
-    return await _forward(state["meta"].handler, request, url)
+    response = await _forward(state["meta"].handler, request, url)
+    sent = request.method == "POST" and re.fullmatch(r"v[\d.]+/\d+/messages", path)
+    if sent and response.status_code == 200:
+        to = json.loads(await request.body()).get("to")
+        started = state["waiting"].pop(to, None)
+        if started is not None:
+            state["reply_seconds"].append(time.time() - started)
+    return response
 
 
 @app.api_route("/ai/{provider}/{path:path}", methods=["GET", "POST"])
@@ -93,8 +115,10 @@ async def ai(provider: str, path: str, request: Request) -> Response:
         raise HTTPException(404)
     fake: FakeAI = state["ai"]
     is_embedding = path.endswith("embeddings") or path.endswith(":batchEmbedContents")
-    if request.method == "POST" and not is_embedding and not fake.queues[provider] and DEFAULT_ANSWER:
-        fake.reply(provider, DEFAULT_ANSWER)
+    if request.method == "POST" and not is_embedding:
+        if not fake.queues[provider] and DEFAULT_ANSWER:
+            fake.reply(provider, DEFAULT_ANSWER)
+        await asyncio.sleep(AI_LATENCY_SECONDS)
     url = httpx.URL(f"https://{PROVIDER_HOSTS[provider]}/{path}", params=request.url.query)
     return await _forward(fake.handler, request, url)
 
@@ -164,8 +188,49 @@ async def control_inbound(message: Inbound) -> dict[str, Any]:
     )
     payload["entry"][0]["id"] = state["waba_id"]
     body, headers = meta_support.signed(payload, APP_SECRET)
+    state["waiting"].setdefault(message.wa_id, time.time())
+    started = time.perf_counter()
     r = await client.post(WEBHOOK_URL, content=body, headers=headers)
-    return {"status": r.status_code, "wamid": wamid}
+    ack_ms = (time.perf_counter() - started) * 1000
+    state["ack_ms"].append(ack_ms)
+    return {"status": r.status_code, "wamid": wamid, "ack_ms": round(ack_ms, 1)}
+
+
+def _percentiles(values: list[float]) -> dict[str, float] | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+
+    def pick(q: float) -> float:
+        return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
+
+    return {
+        "p50": round(statistics.median(ordered), 3),
+        "p95": round(pick(0.95), 3),
+        "p99": round(pick(0.99), 3),
+        "max": round(ordered[-1], 3),
+    }
+
+
+@app.post("/_control/stats-reset")
+async def control_stats_reset() -> dict[str, bool]:
+    """Clears the load-test counters but keeps the connected number and queued answers."""
+    state.update(inbound=0, waiting={}, reply_seconds=[], ack_ms=[])
+    return {"ok": True}
+
+
+@app.get("/_control/stats")
+async def control_stats() -> dict[str, Any]:
+    """For load tests: customer messages delivered, replies sent through the WhatsApp
+    API, customers still waiting, webhook acknowledgement times (ms) and time from a
+    customer's message to the reply leaving (seconds)."""
+    return {
+        "inbound": state["inbound"],
+        "replies": len(state["reply_seconds"]),
+        "waiting": len(state["waiting"]),
+        "webhook_ack_ms": _percentiles(state["ack_ms"]),
+        "reply_seconds": _percentiles(state["reply_seconds"]),
+    }
 
 
 @app.get("/_control/health")

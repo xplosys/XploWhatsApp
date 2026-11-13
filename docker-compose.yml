@@ -130,7 +130,7 @@ services:
     build: ./backend
     restart: unless-stopped
     environment: *backend-env
-    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "default,messages,knowledge", "--loglevel=INFO", "--concurrency=2"]
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "default,messages,knowledge,ai", "--loglevel=INFO", "--concurrency=2"]
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 | grep -q pong"]
       interval: 30s

@@ -70,7 +70,7 @@ QUEUE_DEPTH = Gauge(
     multiprocess_mode="mostrecent",
 )
 
-QUEUES = ("default", "messages", "knowledge")
+QUEUES = ("default", "messages", "knowledge", "ai")
 _WORD = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 
 
