@@ -109,6 +109,22 @@ services:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
 
+  # AI replies and summaries (queue "ai"). Each process waits on the AI provider for a
+  # reply's few seconds, so capacity is about AI_WORKER_CONCURRENCY / provider latency
+  # replies a second (12 processes at ~2 s: ~6 a second). Each process uses ~150 MB.
+  worker-ai:
+    <<: *backend
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "ai", "-n", "ai@%h",
+              "--loglevel=INFO", "--concurrency=${AI_WORKER_CONCURRENCY:-12}"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d ai@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
   beat:
     <<: *backend
     command: ["celery", "-A", "app.workers.celery_app", "beat", "--loglevel=INFO", "--schedule", "/tmp/celerybeat-schedule"]

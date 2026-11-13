@@ -25,7 +25,7 @@ case "${1:-}" in
     [ -f "backups/db/$name" ] || { echo "No such backup: backups/db/$name" >&2; exit 1; }
     read -r -p "Replace the live database with $name? Type RESTORE to continue: " answer
     [ "$answer" = "RESTORE" ] || { echo "Cancelled."; exit 1; }
-    compose stop nginx frontend api worker beat
+    compose stop nginx frontend api worker worker-ai beat
     compose run --rm --entrypoint /bin/bash backup /scripts/restore.sh "/backups/db/$name"
     compose run --rm migrate
     compose up -d

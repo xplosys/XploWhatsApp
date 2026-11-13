@@ -130,7 +130,7 @@ services:
     build: ./backend
     restart: unless-stopped
     environment: *backend-env
-    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "default,messages,knowledge", "--loglevel=INFO", "--concurrency=2"]
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "default,messages,knowledge,ai", "--loglevel=INFO", "--concurrency=2"]
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 | grep -q pong"]
       interval: 30s
@@ -165,7 +165,7 @@ services:
     networks: [internal]
 
   # S3-compatible private object storage for knowledge files (development).
-  # Production points S3_* at a managed bucket instead (Phase 9).
+  # Production uses a managed bucket or the storage profile (docs/DEPLOYMENT_UBUNTU.md, section 4).
   seaweedfs:
     image: chrislusf/seaweedfs:4.50
     restart: unless-stopped
