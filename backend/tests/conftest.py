@@ -86,6 +86,18 @@ def containers(clamd: FakeClamd) -> Iterator[dict[str, str]]:
             "S3_BUCKET": "xplo-test",
             "CLAMAV_HOST": "127.0.0.1",
             "CLAMAV_PORT": str(clamd.port),
+            # Payment gateways (answered by the fakes in tests/support/billing.py).
+            "RAZORPAY_KEY_ID": "rzp_test_key",
+            "RAZORPAY_KEY_SECRET": "rzp-test-secret",
+            "RAZORPAY_WEBHOOK_SECRET": "rzp-webhook-secret",
+            "STRIPE_SECRET_KEY": "sk_test_stripe",
+            "STRIPE_WEBHOOK_SECRET": "whsec_test",
+            "SELLER_LEGAL_NAME": "Xplosys Technologies",
+            "SELLER_ADDRESS": "1 MG Road, Bengaluru 560001",
+            "SELLER_STATE_CODE": "29",
+            "SELLER_GSTIN": "29AAACX1234A1ZT",
+            "SELLER_LUT_NUMBER": "AD290000000001",
+            "INVOICE_SAC_CODE": "998314",
         }
         os.environ.update(env)
         yield env

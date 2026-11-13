@@ -916,7 +916,7 @@ Full detail, including the approval sequence and what can be built before approv
 | 009 | Launch as Meta Tech Provider; customers pay Meta directly | Proposed |
 | 010 | S3 API only for storage (`aioboto3`, path-style). SeaweedFS for dev and tests because MinIO community images are gone; production provider decided in Phase 9. Files are never served by the API: downloads are 5-minute presigned links forced to `attachment` and `application/octet-stream` | Accepted (Phase 4) |
 | 011 | ClamAV (clamd INSTREAM over TCP) scans every file and fetched page in the worker before it is parsed; required outside development; a scanner outage fails the version (retryable) rather than skipping the scan | Accepted (Phase 4) |
-| 012 | Razorpay for India, Stripe for UK/US behind a `PaymentGateway` interface | Proposed |
+| 012 | Razorpay for INR, Stripe for USD, GBP and EUR behind a `PaymentGateway` interface of thin httpx clients on each documented REST API (no SDKs), with a transport hook for test fakes. India sees INR only; plan changes stay in the subscription's currency | Accepted (Phase 7) |
 | 013 | Assistants are business-scoped to comply with Meta's general-purpose chatbot ban | Proposed |
 | 014 | Python deps via `uv`, frontend via `pnpm` | Accepted |
 | 015 | Frontend calls same-origin `/api` (Next rewrites in dev, Nginx in prod) so the refresh cookie is first-party | Accepted |
@@ -944,5 +944,11 @@ Full detail, including the approval sequence and what can be built before approv
 | 037 | Analytics days and hours use the business's time zone (`tenants.timezone`, falling back to UTC if invalid); the previous period is the same length immediately before | Accepted (Phase 6) |
 | 038 | AI cost is shown only to roles that can configure AI or read billing; supervisors see activity and team figures without spend. WhatsApp charges are counted by Meta's billable flag and category, not priced, until a rate card exists (Phase 7) | Accepted (Phase 6) |
 | 039 | Charts are small dependency-free SVG/HTML components with a table view on every chart, keyboard and hover readouts, and a three-colour series palette validated for colour-vision deficiency in light and dark mode | Accepted (Phase 6) |
+| 040 | Prices are data in `plan_prices`, stored before tax with the tax rate frozen at creation, created on the gateway when added, never edited: a new price retires the old one and subscribers keep the price they bought. The app role cannot write the catalogue | Accepted (Phase 7) |
+| 041 | Gateway webhooks are verified, stored once per (gateway, event ID) in `billing_events`, acknowledged, then applied by the worker in a savepoint; an event that depends on one not yet applied is retried by the sweeper, up to 8 attempts. The business is found through a definer function, falling back to the signed notes or metadata | Accepted (Phase 7) |
+| 042 | Upgrades (more per month, or monthly to yearly) apply at once with proration; downgrades wait for the end of the paid period, kept as `pending_price_id` even if the gateway reports the new price early; cancellation is always at period end | Accepted (Phase 7) |
+| 043 | Access ends by date, not by job: `in_force()` treats an ended trial, a failed payment past the 7-day grace period and an ended cancellation as no plan, so limits fall to zero the moment the date passes; data is kept | Accepted (Phase 7) |
+| 044 | One immutable tax invoice per successful payment, numbered consecutively per Indian financial year by a definer function inside the payment's transaction; seller and buyer are snapshots; CGST and SGST within the seller's state, IGST across states, zero-rated export note on non-INR invoices. Invoices are a printable page, not server PDFs | Accepted (Phase 7) |
+| 045 | Extra seats on Razorpay are add-ons (pro rata when added, one per renewal) because Razorpay subscriptions have one plan and quantity; on Stripe they are a second subscription item | Accepted (Phase 7) |
 
 Each will be written up under `docs/adr/` as it is implemented.

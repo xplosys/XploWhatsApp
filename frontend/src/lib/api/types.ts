@@ -644,3 +644,160 @@ export interface SetupProgress {
   knowledge_documents: number;
   active_members: number;
 }
+
+// ---- billing ---------------------------------------------------------------------
+
+export type BillingInterval = "month" | "year";
+
+export interface PlanPrice {
+  id: string;
+  currency: string;
+  interval: BillingInterval;
+  amount: string;
+  seat_amount: string | null;
+  tax_rate: string;
+  amount_with_tax: string;
+  gateway: "razorpay" | "stripe";
+}
+
+export interface BillingPlan {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  features: string[];
+  limits: Record<string, number>;
+  prices: PlanPrice[];
+}
+
+export interface BillingPlans {
+  currencies: string[];
+  plans: BillingPlan[];
+  payments_ready: boolean;
+}
+
+export type SubscriptionStatus = "trialing" | "active" | "past_due" | "canceled" | "expired";
+
+export interface BillingSubscription {
+  status: SubscriptionStatus | null;
+  in_force: boolean;
+  plan_code: string | null;
+  plan_name: string | null;
+  limits: Record<string, number>;
+  price: PlanPrice | null;
+  pending_price: PlanPrice | null;
+  pending_plan_name: string | null;
+  trial_ends_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  past_due_since: string | null;
+  grace_ends_at: string | null;
+  extra_seats: number;
+  seats_used: number;
+  seats_included: number;
+  gateway: "razorpay" | "stripe" | null;
+}
+
+export interface BillingUsage {
+  key: string;
+  label: string;
+  used: number;
+  limit: number;
+}
+
+export interface BillingProfile {
+  legal_name: string;
+  email: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  state_code: string | null;
+  postal_code: string | null;
+  country: string;
+  gstin: string | null;
+  tax_id: string | null;
+  updated_at: string;
+}
+
+export interface GstState {
+  code: string;
+  name: string;
+}
+
+export interface CheckoutStart {
+  checkout_id: string;
+  gateway: "razorpay" | "stripe";
+  razorpay: Record<string, unknown> | null;
+  stripe_url: string | null;
+}
+
+export interface InvoiceSummary {
+  id: string;
+  number: string;
+  currency: string;
+  subtotal: string;
+  tax_total: string;
+  total: string;
+  issued_at: string;
+  period_start: string | null;
+  period_end: string | null;
+}
+
+export interface InvoiceLine {
+  description: string;
+  sac: string | null;
+  quantity: number;
+  amount: string;
+}
+
+export interface InvoiceTax {
+  name: string;
+  rate: string;
+  amount: string;
+}
+
+export interface Invoice extends InvoiceSummary {
+  line_items: InvoiceLine[];
+  taxes: InvoiceTax[];
+  tax_note: string | null;
+  seller: Record<string, string | null>;
+  buyer: Record<string, string | null>;
+  place_of_supply: string | null;
+  gateway: string;
+  gateway_payment_id: string;
+}
+
+export interface BillingTransaction {
+  id: string;
+  amount: string;
+  currency: string;
+  status: "succeeded" | "failed" | "refunded";
+  method: string | null;
+  failure_reason: string | null;
+  invoice_id: string | null;
+  occurred_at: string;
+}
+
+export interface AdminPlanPrice extends PlanPrice {
+  gateway_plan_id: string | null;
+  gateway_seat_price_id: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AdminPlan {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  limits: Record<string, number>;
+  features: string[];
+  trial_days: number;
+  is_public: boolean;
+  is_active: boolean;
+  sort_order: number;
+  subscribers: number;
+  prices: AdminPlanPrice[];
+}

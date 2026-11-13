@@ -7,6 +7,7 @@ starts without manual setup; a warning is logged when that happens.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated
@@ -173,6 +174,37 @@ class Settings(BaseSettings):
     knowledge_url_max_redirects: int = 3
     # Only for local testing against a server on this machine. Never in production.
     knowledge_url_allow_private: bool = False
+
+    # Billing. Prices are data in the plan catalogue (Super Admin), never settings or code.
+    # Razorpay serves INR; Stripe serves the other currencies (ADR-012).
+    razorpay_key_id: str | None = None
+    razorpay_key_secret: SecretStr | None = None
+    razorpay_webhook_secret: SecretStr | None = None
+    razorpay_base_url: str = "https://api.razorpay.com"
+    # Razorpay subscriptions need a fixed number of billing cycles.
+    razorpay_monthly_cycles: int = 120
+    razorpay_yearly_cycles: int = 10
+    stripe_secret_key: SecretStr | None = None
+    stripe_webhook_secret: SecretStr | None = None
+    stripe_base_url: str = "https://api.stripe.com"
+    # Pin the Stripe API version once the account is set up; unset uses the account default.
+    stripe_api_version: str | None = None
+    stripe_webhook_tolerance_seconds: int = 300
+    billing_http_timeout_seconds: float = 20.0
+    # Days a business keeps its plan after a failed renewal while the gateway retries.
+    billing_grace_days: int = 7
+    billing_trial_reminder_days: int = 3
+    # The seller on tax invoices. GST is charged on INR prices only when a GSTIN is set;
+    # sales outside India are exports of services (zero-rated under a Letter of Undertaking).
+    seller_legal_name: str = "Xplosys"
+    seller_address: str | None = None
+    seller_state_code: str | None = None  # two-digit GST state code, e.g. 27 for Maharashtra
+    seller_gstin: str | None = None
+    seller_lut_number: str | None = None
+    gst_rate_percent: Decimal = Decimal("18")
+    # SAC code printed on invoices; confirm the right code with your accountant.
+    invoice_sac_code: str | None = None
+    invoice_prefix: str = "XW"
 
     @field_validator(
         "cors_allowed_origins", "whatsapp_opt_out_keywords", "whatsapp_opt_in_keywords", mode="before"
