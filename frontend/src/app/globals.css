@@ -34,6 +34,12 @@
   --xp-grad-text: linear-gradient(90deg, #4338ca 0%, #7c3aed 50%, #c026d3 100%);
   --xp-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 30px -12px rgba(15, 23, 42, 0.12);
   --xp-shadow-brand: 0 10px 24px -10px rgba(79, 70, 229, 0.65);
+  /* Chart series, checked with the dataviz palette validator against #ffffff
+     (all pairs: CVD dE >= 17.6, normal-vision dE >= 22.5, contrast >= 3:1). */
+  --xp-series-1: #0e9fb8;
+  --xp-series-2: #5b52e8;
+  --xp-series-3: #eb6834;
+  --xp-grid: #eceef4;
 }
 
 [data-theme="dark"] {
@@ -59,6 +65,11 @@
   --xp-grad-text: linear-gradient(90deg, #a5b4fc 0%, #c4b5fd 50%, #f0abfc 100%);
   --xp-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -14px rgba(0, 0, 0, 0.6);
   --xp-shadow-brand: 0 10px 24px -10px rgba(99, 102, 241, 0.55);
+  /* The same hues stepped for the dark surface #0e1526 (CVD dE >= 11.3, normal >= 17.3). */
+  --xp-series-1: #1a9fb3;
+  --xp-series-2: #7f78ee;
+  --xp-series-3: #d9612c;
+  --xp-grid: rgba(148, 163, 184, 0.14);
 }
 
 @theme inline {
@@ -78,6 +89,10 @@
   --color-brand-soft: var(--xp-chip);
   --color-brand-ink: var(--xp-chip-ink);
   --color-ring: var(--xp-ring);
+  --color-series-1: var(--xp-series-1);
+  --color-series-2: var(--xp-series-2);
+  --color-series-3: var(--xp-series-3);
+  --color-grid: var(--xp-grid);
   --color-on-brand: var(--xp-on-brand);
   --color-danger: var(--xp-danger);
   --color-danger-soft: var(--xp-danger-soft);

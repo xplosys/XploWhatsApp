@@ -17,6 +17,7 @@ const NAV = [
   { href: "/conversations", label: "Conversations", permission: "conversations:read" },
   { href: "/contacts", label: "Contacts", permission: "conversations:read" },
   { href: "/leads", label: "Leads", permission: "leads:manage" },
+  { href: "/analytics", label: "Analytics", permission: "analytics:read" },
   { href: "/whatsapp", label: "WhatsApp", permission: "whatsapp:read" },
   { href: "/ai", label: "AI assistant", permission: "ai:configure" },
   { href: "/knowledge", label: "Knowledge base", permission: "knowledge:read" },

@@ -552,3 +552,95 @@ export interface KnowledgeSearch {
   min_score: number;
   status: string;
 }
+
+// ---- analytics -----------------------------------------------------------------------
+
+export type AnalyticsPeriod = 7 | 30 | 90;
+
+export interface AnalyticsTotals {
+  conversations_started: number;
+  messages_in: number;
+  messages_ai: number;
+  messages_team: number;
+  ai_conversations: number;
+  ai_handovers: number;
+  ai_resolution_rate: number | null;
+  leads_created: number;
+  leads_won: number;
+}
+
+export interface AnalyticsDay {
+  date: string;
+  customer: number;
+  ai: number;
+  team: number;
+}
+
+export interface ReplyTime {
+  conversations: number;
+  median_seconds: number | null;
+  p90_seconds: number | null;
+}
+
+export interface AnalyticsAgent {
+  user_id: string;
+  name: string;
+  role: TenantRole | null;
+  messages: number;
+  conversations: number;
+  handovers: number;
+  handovers_answered: number;
+  handover_median_seconds: number | null;
+  leads_won: number;
+}
+
+export interface MoneyTotal {
+  currency: string;
+  total: string;
+}
+
+export interface AnalyticsOverview {
+  days: AnalyticsPeriod;
+  timezone: string;
+  start: string;
+  end: string;
+  totals: AnalyticsTotals;
+  previous: AnalyticsTotals;
+  daily: AnalyticsDay[];
+  hours: { weekday: number; hour: number; messages: number }[];
+  handover_reasons: { reason: string; count: number }[];
+  response: {
+    first_reply_ai: ReplyTime | null;
+    first_reply_team: ReplyTime | null;
+    first_reply_none: number;
+    handovers: number;
+    handovers_answered: number;
+    handover_median_seconds: number | null;
+  };
+  agents: AnalyticsAgent[];
+  won_value: MoneyTotal[];
+  open_unanswered: number;
+  delivery: {
+    sent: number;
+    delivered: number;
+    read: number;
+    failed: number;
+    pending: number;
+    top_errors: { code: string; count: number }[];
+    billable: { category: string; messages: number }[];
+  };
+  ai_cost: {
+    calls: number;
+    unpriced_calls: number;
+    cost: MoneyTotal[];
+    calls_by_purpose: { purpose: string; calls: number }[];
+  } | null;
+}
+
+export interface SetupProgress {
+  whatsapp_connected: boolean;
+  assistant_published: boolean;
+  auto_reply_on: boolean;
+  knowledge_documents: number;
+  active_members: number;
+}
