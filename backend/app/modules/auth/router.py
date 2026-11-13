@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.api.deps import CurrentUser, DbSession, Meta
 from app.core.config import get_settings
-from app.core.errors import Forbidden, Unauthorized
+from app.core.errors import Forbidden, NotFound, Unauthorized
 from app.core.rate_limit import rate_limit
 from app.modules.audit import service as audit
 from app.modules.auth import service
 from app.modules.auth.schemas import (
     ChangePasswordRequest,
+    DeleteAccountRequest,
     ForgotPasswordRequest,
     InvitationPreviewOut,
     LoginRequest,
+    LoginSessionOut,
     MeOut,
     MessageOut,
     MfaChallengeOut,
@@ -32,12 +36,14 @@ from app.modules.auth.sessions import (
     IssuedSession,
     end_session,
     issue_session,
+    list_login_sessions,
     list_memberships,
+    revoke_all_for_user,
     revoke_family,
     rotate_session,
 )
 from app.modules.rbac.permissions import ROLE_PERMISSIONS
-from app.modules.tenants.models import TenantRole
+from app.modules.tenants.models import Tenant, TenantRole
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -171,7 +177,12 @@ async def me(ctx: CurrentUser) -> MeOut:
     for m in memberships:
         if m.tenant_id == ctx.claims.tenant_id and m.status == "active":
             role = m.role
+    mfa_required = False
+    if role and not ctx.claims.mfa_verified and ctx.claims.tenant_id:
+        tenant = await ctx.session.get(Tenant, ctx.claims.tenant_id)
+        mfa_required = bool(tenant and tenant.require_mfa)
     return MeOut(
+        mfa_required=mfa_required,
         user=UserOut.model_validate(ctx.user),
         active_tenant_id=ctx.claims.tenant_id if role else None,
         role=role,
@@ -229,8 +240,17 @@ async def mfa_setup(ctx: CurrentUser) -> MfaSetupOut:
 
 
 @router.post("/mfa/enable", response_model=RecoveryCodesOut, dependencies=[auth_rate_limit])
-async def mfa_enable(body: MfaEnableRequest, ctx: CurrentUser, meta: Meta) -> RecoveryCodesOut:
+async def mfa_enable(
+    body: MfaEnableRequest, response: Response, ctx: CurrentUser, meta: Meta
+) -> RecoveryCodesOut:
     codes = await service.mfa_enable(ctx.session, ctx.user, body.code, ctx.claims.tenant_id, meta)
+    # The code just proved the second factor: move this browser to a two-factor session
+    # (needed where a business requires it). The old access token stops working, and the
+    # app picks up the new one from the refresh cookie on its next call.
+    if ctx.claims.session_id:
+        await revoke_family(ctx.session, ctx.claims.session_id, "mfa_enabled")
+    issued = await issue_session(ctx.session, ctx.user, ctx.claims.tenant_id, mfa_verified=True, meta=meta)
+    _set_refresh_cookie(response, issued.refresh_token)
     return RecoveryCodesOut(recovery_codes=codes)
 
 
@@ -238,6 +258,61 @@ async def mfa_enable(body: MfaEnableRequest, ctx: CurrentUser, meta: Meta) -> Re
 async def mfa_disable(body: MfaDisableRequest, ctx: CurrentUser, meta: Meta) -> MessageOut:
     await service.mfa_disable(ctx.session, ctx.user, body.password, body.code, ctx.claims.tenant_id, meta)
     return MessageOut(message="Two-factor authentication disabled.")
+
+
+@router.get("/sessions", response_model=list[LoginSessionOut])
+async def sessions(ctx: CurrentUser) -> list[LoginSessionOut]:
+    """Where this account is signed in."""
+    return await list_login_sessions(ctx.session, ctx.user.id, ctx.claims.session_id)
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def end_login_session(session_id: uuid.UUID, ctx: CurrentUser, meta: Meta) -> Response:
+    """Sign out one device. Its access token stops working on its next request."""
+    listed = await list_login_sessions(ctx.session, ctx.user.id, ctx.claims.session_id)
+    if session_id not in {s.id for s in listed}:
+        raise NotFound("Session not found.", code="session_not_found")
+    await revoke_family(ctx.session, session_id, "signed_out_remotely")
+    await audit.record(
+        ctx.session,
+        "auth.session_revoked",
+        tenant_id=ctx.claims.tenant_id,
+        actor_user_id=ctx.user.id,
+        meta=meta,
+        target_type="session",
+        target_id=session_id,
+        details={"current": session_id == ctx.claims.session_id},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/sessions/revoke-others", response_model=MessageOut)
+async def end_other_sessions(ctx: CurrentUser, meta: Meta) -> MessageOut:
+    """Sign out everywhere except this browser."""
+    ended = await revoke_all_for_user(
+        ctx.session, ctx.user.id, "signed_out_remotely", keep_family=ctx.claims.session_id
+    )
+    await audit.record(
+        ctx.session,
+        "auth.sessions_revoked",
+        tenant_id=ctx.claims.tenant_id,
+        actor_user_id=ctx.user.id,
+        meta=meta,
+        details={"tokens": ended},
+    )
+    return MessageOut(message="Signed out of every other device.")
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT, dependencies=[auth_rate_limit])
+async def delete_account(
+    body: DeleteAccountRequest, request: Request, ctx: CurrentUser, meta: Meta
+) -> Response:
+    """Delete your own account. Personal details are erased at once and you are signed out."""
+    _require_csrf_header(request)
+    await service.delete_account(ctx.session, ctx.user, body.password, body.code, meta)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    _clear_refresh_cookie(response)
+    return response
 
 
 @router.get("/invitations/{token}", response_model=InvitationPreviewOut, dependencies=[auth_rate_limit])

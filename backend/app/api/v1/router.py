@@ -1,5 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.core.config import get_settings
+from app.core.rate_limit import rate_limit
 from app.modules.admin.router import router as admin_router
 from app.modules.ai.admin_router import router as ai_admin_router
 from app.modules.ai.router import router as ai_router
@@ -15,6 +17,7 @@ from app.modules.conversations.router import router as conversations_router
 from app.modules.conversations.unanswered_router import router as unanswered_router
 from app.modules.knowledge.router import router as knowledge_router
 from app.modules.leads.router import router as leads_router
+from app.modules.privacy.router import router as privacy_router
 from app.modules.tenants.router import router as tenants_router
 from app.modules.webhooks.router import router as webhooks_router
 from app.modules.whatsapp.router import router as whatsapp_router
@@ -23,6 +26,7 @@ api_router = APIRouter(prefix="/api/v1")
 for r in (
     auth_router,
     tenants_router,
+    privacy_router,
     billing_router,
     billing_admin_router,
     audit_router,
@@ -37,7 +41,11 @@ for r in (
     unanswered_router,
     knowledge_router,
     analytics_router,
-    webhooks_router,
-    billing_webhooks_router,
 ):
     api_router.include_router(r)
+
+# Gateways and Meta sign every event, but a flood of unsigned requests still costs a
+# signature check each, so each sender address gets a generous per-minute budget.
+webhook_rate_limit = Depends(rate_limit("webhook", lambda: get_settings().rate_limit_webhook_per_minute))
+for r in (webhooks_router, billing_webhooks_router):
+    api_router.include_router(r, dependencies=[webhook_rate_limit])

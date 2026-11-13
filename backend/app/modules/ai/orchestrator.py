@@ -20,7 +20,7 @@ from app.modules.ai import catalogue, registry
 from app.modules.ai.assistant import AssistantConfig
 from app.modules.ai.catalogue import CallRecord
 from app.modules.ai.models import ModelKind
-from app.modules.ai.prompt import REPLY_SCHEMA, Passage, grounding_text, system_prompt
+from app.modules.ai.prompt import REPLY_SCHEMA, Passage, customer_text, grounding_text, system_prompt
 from app.modules.ai.providers.base import GenerateRequest, ProviderError, Turn, Usage
 from app.modules.ai.validator import validate
 
@@ -107,7 +107,8 @@ async def run(
         max_output_tokens=settings.ai_max_output_tokens,
         response_schema=REPLY_SCHEMA,
     )
-    grounding = grounding_text(config, turns, knowledge)
+    grounding = grounding_text(config, knowledge)
+    said = customer_text(turns)
     sources = [p.source() for p in knowledge]
     attempts: list[Attempt] = []
     for step in steps:
@@ -137,7 +138,9 @@ async def run(
                     continue
                 break
             latency = int((time.monotonic() - started) * 1000)
-            verdict = validate(result.text, max_chars=config.max_reply_chars, grounding=grounding)
+            verdict = validate(
+                result.text, max_chars=config.max_reply_chars, grounding=grounding, customer=said
+            )
             if verdict.kind == "invalid":
                 attempts.append(
                     Attempt(

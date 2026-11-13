@@ -8,7 +8,7 @@ import secrets
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -326,11 +326,21 @@ async def verify_mfa_login(
     if user is None or not user.is_active or not user.mfa_enabled:
         raise Unauthorized(code="invalid_token")
     await _lockout_check(user.email)
+    recovery_left = len(user.mfa_recovery_code_hashes)
     if not _use_mfa_code(user, code):
         await get_redis().delete(f"mfa_jti:{claims['jti']}")
         await _register_failure(user.email, meta, user.id)
         raise Unauthorized("The code is incorrect.", code="invalid_mfa_code")
     await get_redis().delete(f"login_fail:{user.email.lower()}")
+    if len(user.mfa_recovery_code_hashes) < recovery_left:
+        await audit.record(
+            session,
+            "auth.mfa_recovery_code_used",
+            tenant_id=None,
+            actor_user_id=user.id,
+            meta=meta,
+            details={"remaining": len(user.mfa_recovery_code_hashes)},
+        )
     return await _complete_login(session, user, mfa_verified=True, meta=meta)
 
 
@@ -430,6 +440,13 @@ async def mfa_disable(
         )
     if not user.mfa_enabled:
         raise Conflict("Two-factor authentication is not enabled.", code="mfa_not_enabled")
+    if tenant_id is not None:
+        tenant = await session.get(Tenant, tenant_id)
+        if tenant is not None and tenant.require_mfa:
+            raise Forbidden(
+                f"{tenant.name} requires two-factor authentication for everyone on the team.",
+                code="mfa_required_by_business",
+            )
     if not verify_password(password, user.password_hash) or not _use_mfa_code(user, code):
         raise Unauthorized("Password or code is incorrect.", code="invalid_credentials")
     user.mfa_enabled_at = None
@@ -448,3 +465,65 @@ async def accept_invitation(session: AsyncSession, user: User, token: str, meta:
         raise Forbidden("Verify your email address first.", code="email_not_verified")
     await _join_tenant(session, user, invitation, meta)
     return invitation.tenant_id
+
+
+# --------------------------------------------------------------------- account deletion
+
+
+async def delete_account(
+    session: AsyncSession, user: User, password: str, code: str | None, meta: RequestMeta
+) -> None:
+    """Delete the person's own account (DPDP Act s.12 / GDPR art. 17).
+
+    Personal details are replaced at once and every session ends. Messages the person
+    sent to customers stay with the business that sent them, attributed to "Deleted user";
+    the audit log keeps the account ID only.
+    """
+    from app.modules.auth.sessions import revoke_all_for_user
+
+    if user.is_super_admin:
+        raise Forbidden("A Super Admin account can't delete itself.", code="super_admin_cannot_delete")
+    if not verify_password(password, user.password_hash):
+        raise Unauthorized("Password is incorrect.", code="invalid_credentials")
+    if user.mfa_enabled and not (code and _use_mfa_code(user, code)):
+        raise Unauthorized("Enter a code from your authenticator app.", code="invalid_mfa_code")
+    sole = (
+        (await session.execute(text("SELECT * FROM app_sole_owner_tenants(:uid)"), {"uid": user.id}))
+        .mappings()
+        .all()
+    )
+    if sole:
+        raise Conflict(
+            "You are the only owner of a business. Make someone else an owner, or delete the "
+            "business, before deleting your account.",
+            code="sole_owner",
+            details={"businesses": [r["tenant_name"] for r in sole]},
+        )
+    now = utcnow()
+    user.email = f"deleted-{user.id.hex}@deleted.invalid"
+    user.full_name = "Deleted user"
+    user.password_hash = hash_password(secrets.token_urlsafe(32))
+    user.is_active = False
+    user.deleted_at = now
+    user.email_verified_at = None
+    user.mfa_enabled_at = None
+    user.mfa_secret_enc = None
+    user.mfa_recovery_code_hashes = []
+    user.last_tenant_id = None
+    await revoke_all_for_user(session, user.id, "account_deleted")
+    await session.execute(delete(UserActionToken).where(UserActionToken.user_id == user.id))
+    await session.flush()
+    removed = await session.execute(
+        text("SELECT tenant_id FROM app_remove_user_memberships(:uid)"), {"uid": user.id}
+    )
+    left = removed.scalars().all()
+    await audit.record(
+        session,
+        "user.deleted",
+        tenant_id=None,
+        actor_user_id=user.id,
+        meta=meta,
+        target_type="user",
+        target_id=user.id,
+        details={"businesses_left": len(left)},
+    )

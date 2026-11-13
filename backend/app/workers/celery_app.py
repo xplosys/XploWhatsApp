@@ -34,6 +34,7 @@ celery_app.conf.update(
         "app.workers.tasks.messages.*": {"queue": "messages"},
         "app.workers.tasks.knowledge.*": {"queue": "knowledge"},
         "app.workers.tasks.billing.*": {"queue": "default"},
+        "app.workers.tasks.privacy.*": {"queue": "default"},
     },
     beat_schedule={
         "purge-expired-auth-tokens": {
@@ -56,6 +57,10 @@ celery_app.conf.update(
             "task": "app.workers.tasks.billing.sweep",
             "schedule": 600.0,
         },
+        "sweep-privacy": {
+            "task": "app.workers.tasks.privacy.sweep",
+            "schedule": 3600.0,
+        },
         "check-whatsapp-accounts": {
             "task": "app.workers.tasks.whatsapp.check_all_accounts",
             "schedule": 24 * 3600.0,
@@ -69,6 +74,7 @@ celery_app.conf.update(
         "app.workers.tasks.whatsapp",
         "app.workers.tasks.knowledge",
         "app.workers.tasks.billing",
+        "app.workers.tasks.privacy",
     ],
 )
 

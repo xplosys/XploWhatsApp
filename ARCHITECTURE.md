@@ -882,7 +882,7 @@ Full detail, including the approval sequence and what can be built before approv
 | Passwords | Argon2id (`argon2-cffi`), parameters tuned to ~250 ms on the VPS, rehash on login when parameters change. Breached-password check (k-anonymity HIBP) optional. |
 | Access tokens | JWT, ES256, 15 min, `kid` header for key rotation, claims `sub`, `tid`, `role`, `sid`, `mfa`. |
 | Refresh tokens | Opaque 256-bit random, stored as SHA-256 hash, 30-day sliding life, rotated on each use. A family ID detects reuse: replaying an old token revokes the whole family. Delivered as an `HttpOnly; Secure; SameSite=Strict` cookie scoped to `/api/v1/auth`, with a CSRF header check. |
-| MFA | TOTP (RFC 6238) plus recovery codes. Mandatory for Super Admin, enforceable per tenant for Owner/Admin. Step-up required for credential changes and WhatsApp disconnects. |
+| MFA | TOTP (RFC 6238) plus recovery codes. Mandatory for Super Admin; a business can require it for its whole team (ADR 047). Deleting an account asks for the password and a code. |
 | RBAC | Permission matrix (Super Admin, Tenant Owner, Tenant Admin, Supervisor, Support Agent) enforced in a FastAPI dependency per endpoint; tested as a table. |
 | Tenant isolation | Membership-derived tenant, tenant-aware repositories, RLS `FORCE` with non-owner role, composite FKs, isolation tests in CI. |
 | Secrets at rest | Envelope encryption: AES-256-GCM per secret with a random data key, data key wrapped by a versioned key-encryption key from env (`XPLO_KEK_<version>`). `key_version` stored with each ciphertext; a rotation task re-wraps. Path to a KMS or Vault later. |
@@ -890,14 +890,14 @@ Full detail, including the approval sequence and what can be built before approv
 | Webhook authenticity | `X-Hub-Signature-256` HMAC over the raw body with the app secret, constant-time compare, reject before parsing. GET verification compares `hub.verify_token`. Razorpay/Stripe signatures verified the same way. |
 | Transport | TLS 1.2+ at Nginx, HSTS, HTTP→HTTPS redirect. Postgres/Redis not published. |
 | CORS | Allow-list of app origins only, credentials allowed only for those. |
-| Rate limiting | Nginx `limit_req` per IP plus Redis token buckets per user, tenant and endpoint class (auth endpoints strictest). |
+| Rate limiting | Redis counters per IP for sign-in endpoints (strictest), per person for every signed-in request, and per sender for webhooks; the client IP is trusted from `X-Real-IP` only behind `TRUSTED_PROXIES`. Nginx `limit_req` per IP in front. |
 | Uploads | Size and type limits, magic-byte sniffing, private bucket, random object keys, ClamAV scan before processing, never served from the API origin; downloads via short-lived presigned URLs. |
 | URL ingestion | SSRF guard: resolve DNS, block private/loopback/link-local/metadata ranges, re-check on redirects, size and time limits. |
 | Prompt injection | Untrusted content (customer messages, documents) wrapped in delimiters with explicit instruction hierarchy; model output is text only (no tool calls in v1); validator checks scope and grounding; system prompt and keys never echoed. |
 | Logging | Structured JSON (structlog), request ID and tenant ID on every line, a redaction processor for tokens, keys, passwords, phone numbers (partially masked) and message bodies in non-debug logs. |
 | Audit | Append-only `audit_logs` for auth events, role changes, credential changes, WhatsApp connect/disconnect, config changes, admin actions. |
 | Backups | Nightly `pg_dump` (plus WAL archiving later), encrypted with age/GPG before leaving the host, off-site copy, monthly restore test. |
-| Dependencies | Pinned lockfiles, Dependabot, `pip-audit` and `npm audit` in CI, container image scanning (Trivy). |
+| Dependencies | Pinned lockfiles, `pip-audit` and `pnpm audit` in CI, gitleaks over the git history, container image scanning (Trivy). |
 
 ---
 
@@ -950,5 +950,14 @@ Full detail, including the approval sequence and what can be built before approv
 | 043 | Access ends by date, not by job: `in_force()` treats an ended trial, a failed payment past the 7-day grace period and an ended cancellation as no plan, so limits fall to zero the moment the date passes; data is kept | Accepted (Phase 7) |
 | 044 | One immutable tax invoice per successful payment, numbered consecutively per Indian financial year by a definer function inside the payment's transaction; seller and buyer are snapshots; CGST and SGST within the seller's state, IGST across states, zero-rated export note on non-INR invoices. Invoices are a printable page, not server PDFs | Accepted (Phase 7) |
 | 045 | Extra seats on Razorpay are add-ons (pro rata when added, one per renewal) because Razorpay subscriptions have one plan and quantity; on Stripe they are a second subscription item | Accepted (Phase 7) |
+| 046 | An access token is honoured only while its sign-in (refresh-token family, the `sid` claim) is live, checked on every request with one indexed lookup. Signing a device out takes effect at once instead of after 15 minutes. Turning two-factor on ends the current sign-in and starts a two-factor-verified one | Accepted (Phase 8) |
+| 047 | A business can require two-factor for everyone (`tenants.require_mfa`), enforced in the tenant dependency; members without it can still reach their own account page to turn it on. The owner must be two-factor-verified to switch it on, and nobody can turn two-factor off while a business they belong to requires it | Accepted (Phase 8) |
+| 048 | The client IP is read from `X-Real-IP` only when the connection comes from `TRUSTED_PROXIES`; every signed-in request counts against a per-person budget, and webhooks against a per-sender budget | Accepted (Phase 8) |
+| 049 | Supersedes part of 023: prices, percentages and links in a reply must come from the business's own settings or documents; the customer's words count as grounding only for times, phone numbers and emails. Text imitating the prompt's section markers is removed from business settings and passages, and invisible characters are removed before the leak and secret checks | Accepted (Phase 8) |
+| 050 | Erasing a contact relies on foreign-key cascades in one transaction and leaves only an audit entry with a one-way phone fingerprint. Business deletion is soft for a grace period (default 30 days), then purges every tenant table except the ones the law or accounting needs (tenant shell, subscriptions, invoices, payments, billing events, usage records, audit log) and deletes the business's stored files | Accepted (Phase 8) |
+| 051 | Data exports are built by a worker in one `REPEATABLE READ READ ONLY` transaction under the tenant's RLS context, as JSON Lines in a zip in the private bucket; secret columns are never exported; links expire after 7 days and every download is audited | Accepted (Phase 8) |
+| 052 | Key rotation is a set of CLI commands rather than a background job: a new JWT key keeps the previous public key for verification; a new encryption key is added beside the old ones, and `rewrap-secrets` re-encrypts every stored secret in one transaction that saves nothing if any secret cannot be read | Accepted (Phase 8) |
+| 053 | Every route that changes data is audited, or listed with the reason it isn't, and a test fails for any new route until it is classified | Accepted (Phase 8) |
+| 054 | The web app sends a per-request nonce CSP with `'strict-dynamic'` from the Next.js proxy, so every page renders on request; frames and connections are limited to Razorpay and Facebook | Accepted (Phase 8) |
 
 Each will be written up under `docs/adr/` as it is implemented.

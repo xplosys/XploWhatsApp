@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { ContactCard, PanelSection } from "@/components/inbox/ContactCard";
+import { EraseContact } from "@/components/privacy/EraseContact";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
@@ -33,6 +34,7 @@ export default function ContactsPage() {
   const [tags, setTags] = useState<TagCount[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(() => {
     const p = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(filters.offset) });
@@ -67,6 +69,7 @@ export default function ContactsPage() {
         <p className="mt-1 text-sm text-muted">Everyone who has written to your WhatsApp numbers, with your notes on them.</p>
       </header>
       {error && <Alert tone="error">{error}</Alert>}
+      {notice && <Alert tone="success">{notice}</Alert>}
       <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
         <Card>
           <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_180px_200px]">
@@ -168,6 +171,22 @@ export default function ContactsPage() {
           <div key={selectedId} className="space-y-4">
             <ContactCard contactId={selectedId} canManage={can("contacts:manage")} canLeads={can("leads:manage")} onChanged={load} />
             <ContactConversations contactId={selectedId} />
+            {can("privacy:manage") && (
+              <EraseContact
+                contactId={selectedId}
+                name={(() => {
+                  const c = page?.items.find((x) => x.id === selectedId);
+                  return c ? contactLabel(c) : "this customer";
+                })()}
+                onErased={(r) => {
+                  setSelectedId(null);
+                  setNotice(
+                    `Customer data erased: ${r.conversations} conversation${r.conversations === 1 ? "" : "s"}, ${r.messages} message${r.messages === 1 ? "" : "s"} and ${r.leads} lead${r.leads === 1 ? "" : "s"}.`,
+                  );
+                  void load();
+                }}
+              />
+            )}
           </div>
         ) : (
           <div className="hidden xl:block">

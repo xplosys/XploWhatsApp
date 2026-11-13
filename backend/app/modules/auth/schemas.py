@@ -108,6 +108,24 @@ class MeOut(BaseModel):
     permissions: list[str]
     memberships: list[MembershipSummary]
     mfa_verified: bool
+    # The active business requires two-factor sign-in and this session doesn't have it.
+    mfa_required: bool = False
+
+
+class LoginSessionOut(BaseModel):
+    """One signed-in device or browser (a refresh-token family)."""
+
+    id: uuid.UUID
+    signed_in_at: datetime
+    last_active_at: datetime
+    ip: str | None
+    user_agent: str | None
+    current: bool
+
+
+class DeleteAccountRequest(BaseModel):
+    password: Password
+    code: OtpCode | None = None
 
 
 class MfaSetupOut(BaseModel):

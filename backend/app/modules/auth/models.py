@@ -33,6 +33,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # Set when the person deletes their account: personal details are replaced at that moment.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     @property
     def mfa_enabled(self) -> bool:

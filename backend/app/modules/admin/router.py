@@ -116,3 +116,56 @@ async def suspend_tenant(tenant_id: uuid.UUID, ctx: SuperAdmin, meta: Meta) -> A
 @router.post("/tenants/{tenant_id}/reactivate", response_model=AdminTenantOut)
 async def reactivate_tenant(tenant_id: uuid.UUID, ctx: SuperAdmin, meta: Meta) -> AdminTenantOut:
     return await _set_status(tenant_id, "active", ctx, meta)
+
+
+class DeletedTenantOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    deleted_at: datetime
+    purge_after: datetime | None
+
+
+@router.get("/tenants-deleted", response_model=list[DeletedTenantOut])
+async def list_deleted_tenants(_: SuperAdmin) -> list[DeletedTenantOut]:
+    """Businesses their owners deleted that are still inside the grace period."""
+    async with admin_transaction() as session:
+        rows = (
+            await session.execute(
+                select(Tenant)
+                .where(Tenant.deleted_at.is_not(None), Tenant.purged_at.is_(None))
+                .order_by(Tenant.purge_after)
+                .limit(200)
+            )
+        ).scalars()
+        return [
+            DeletedTenantOut(
+                id=t.id, name=t.name, slug=t.slug, deleted_at=t.deleted_at, purge_after=t.purge_after
+            )
+            for t in rows
+            if t.deleted_at is not None
+        ]
+
+
+@router.post("/tenants/{tenant_id}/restore", response_model=AdminTenantOut)
+async def restore_tenant(tenant_id: uuid.UUID, ctx: SuperAdmin, meta: Meta) -> AdminTenantOut:
+    """Undo a business deletion during the grace period (the owner asked support)."""
+    from app.modules.privacy.service import restore_business
+
+    async with admin_transaction() as session:
+        tenant = await session.get(Tenant, tenant_id, with_for_update=True)
+        if tenant is None:
+            raise NotFound("Tenant not found.")
+        await restore_business(session, tenant)
+        await audit.record(
+            session,
+            "admin.tenant_restored",
+            tenant_id=tenant_id,
+            actor_user_id=ctx.user.id,
+            meta=meta,
+            target_type="tenant",
+            target_id=tenant_id,
+        )
+        await session.flush()
+        row = (await session.execute(_tenant_query().where(Tenant.id == tenant_id))).one()
+        return _out(row)

@@ -11,6 +11,7 @@ AI-powered WhatsApp customer engagement and automation platform by XploSys. Mult
 - [docs/CONVERSATIONS.md](docs/CONVERSATIONS.md): inbox, takeover and handover, assignment, notes, contacts and tags, AI summaries, unanswered questions and leads
 - [docs/ANALYTICS.md](docs/ANALYTICS.md): overview and analytics figures, how each is counted, and who sees them
 - [docs/BILLING.md](docs/BILLING.md): plans and prices, Razorpay and Stripe, webhooks, plan changes and seats, GST invoices
+- [docs/SECURITY.md](docs/SECURITY.md): threat model, controls, key rotation, incident response, pen-test checklist, DPDP/GDPR data tools
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md): phased plan
 
 Stack: Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Celery, PostgreSQL 17 + pgvector, Redis, Next.js 16 + TypeScript + Tailwind CSS 4, Docker Compose.

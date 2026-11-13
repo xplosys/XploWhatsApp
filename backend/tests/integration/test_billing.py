@@ -683,3 +683,26 @@ async def test_trial_reminder_and_end(register: RegisterFn, su_conn: Any, databa
     assert sub["status"] is None and sub["plan_code"] is None
     usage = {u["key"]: u["limit"] for u in (await owner.get(f"{API}/billing/usage")).json()}
     assert set(usage.values()) == {0}
+
+
+async def test_gateway_non_json_error_is_a_gateway_error(monkeypatch: Any) -> None:
+    """A proxy's HTML error page from a gateway becomes a clean gateway error, not a crash."""
+    import httpx
+
+    from app.modules.billing.gateways.base import GatewayError, set_transport_override
+    from app.modules.billing.gateways.razorpay import Razorpay
+    from app.modules.billing.gateways.stripe import Stripe
+
+    def bad_gateway(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, content=b"<html><body>Bad Gateway</body></html>")
+
+    set_transport_override(httpx.MockTransport(bad_gateway))
+    try:
+        for gateway in (Razorpay(), Stripe()):
+            monkeypatch.setattr(gateway, "configured", lambda: True)
+            monkeypatch.setattr(gateway, "_secret", "secret", raising=False)
+            monkeypatch.setattr(gateway, "key_id", "rzp_test", raising=False)
+            with pytest.raises(GatewayError):
+                await gateway._call("POST", "/subscriptions", {})
+    finally:
+        set_transport_override(None)

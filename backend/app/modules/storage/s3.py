@@ -71,6 +71,15 @@ async def put(key: str, body: bytes, content_type: str) -> None:
         raise StorageUnavailable() from exc
 
 
+async def put_file(key: str, path: str, content_type: str) -> None:
+    """Upload a file from disk (multipart for large files, so it is never held in memory)."""
+    try:
+        async with _client() as s3:
+            await s3.upload_file(path, get_settings().s3_bucket, key, ExtraArgs={"ContentType": content_type})
+    except (BotoCoreError, ClientError) as exc:
+        raise StorageUnavailable() from exc
+
+
 async def get(key: str, max_bytes: int) -> bytes:
     try:
         async with _client() as s3:
@@ -89,6 +98,39 @@ async def delete(key: str) -> None:
         async with _client() as s3:
             await s3.delete_object(Bucket=get_settings().s3_bucket, Key=key)
     except (BotoCoreError, ClientError) as exc:
+        raise StorageUnavailable() from exc
+
+
+async def delete_prefix(prefix: str) -> int:
+    """Remove every object under a prefix (a business's files when it is purged).
+    Returns how many were removed."""
+    if not prefix.endswith("/") or prefix.count("/") < 2:
+        raise ValueError("refusing to delete a broad prefix")
+    bucket = get_settings().s3_bucket
+    removed = 0
+    try:
+        async with _client() as s3:
+            paginator = s3.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+                if keys:
+                    await s3.delete_objects(Bucket=bucket, Delete={"Objects": keys, "Quiet": True})
+                    removed += len(keys)
+    except (BotoCoreError, ClientError) as exc:
+        raise StorageUnavailable() from exc
+    return removed
+
+
+async def exists(key: str) -> bool:
+    try:
+        async with _client() as s3:
+            await s3.head_object(Bucket=get_settings().s3_bucket, Key=key)
+            return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise StorageUnavailable() from exc
+    except BotoCoreError as exc:
         raise StorageUnavailable() from exc
 
 

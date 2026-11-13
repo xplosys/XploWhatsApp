@@ -25,6 +25,7 @@ from app.modules.billing.gateways.base import (
     GatewaySubscription,
     PaymentGateway,
     minor_units,
+    response_json,
     transport,
     with_tax,
 )
@@ -122,7 +123,7 @@ class Stripe(PaymentGateway):
             except httpx.HTTPError as exc:
                 log.warning("stripe_unreachable", path=path, error=str(exc))
                 raise GatewayError() from exc
-        body: dict[str, Any] = r.json() if r.content else {}
+        body = response_json(r)
         if r.status_code >= 400:
             err = body.get("error") or {}
             log.warning("stripe_error", path=path, status=r.status_code, code=err.get("code"))

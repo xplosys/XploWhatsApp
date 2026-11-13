@@ -49,7 +49,10 @@ def create_app() -> FastAPI:
     app.add_middleware(
         UploadSizeLimitMiddleware, max_bytes=(settings.knowledge_max_file_mb + 1) * 1024 * 1024
     )
-    app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(
+        RequestContextMiddleware,
+        hsts_max_age=settings.hsts_max_age_seconds if settings.is_production_like else None,
+    )
     register_exception_handlers(app)
     app.include_router(health_router)
     app.include_router(api_router)

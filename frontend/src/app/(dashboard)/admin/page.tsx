@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { AICatalogueCard } from "@/components/admin/AICatalogueCard";
+import { DeletedBusinessesCard } from "@/components/admin/DeletedBusinessesCard";
 import { PlansCatalogueCard } from "@/components/admin/PlansCatalogueCard";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
@@ -137,6 +138,7 @@ export default function AdminPage() {
       </Card>
       {!error && <PlansCatalogueCard />}
       {!error && <AICatalogueCard />}
+      {!error && <DeletedBusinessesCard />}
     </>
   );
 }

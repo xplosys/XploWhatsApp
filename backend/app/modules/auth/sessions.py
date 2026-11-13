@@ -17,7 +17,7 @@ from app.core.security.tokens import generate_token, hash_token
 from app.db.session import app_transaction
 from app.modules.audit.service import RequestMeta
 from app.modules.auth.models import RefreshToken, User
-from app.modules.auth.schemas import MembershipSummary, SessionOut, UserOut
+from app.modules.auth.schemas import LoginSessionOut, MembershipSummary, SessionOut, UserOut
 from app.modules.tenants.models import TenantRole
 
 
@@ -114,12 +114,49 @@ async def revoke_family(session: AsyncSession, family_id: uuid.UUID, reason: str
     )
 
 
-async def revoke_all_for_user(session: AsyncSession, user_id: uuid.UUID, reason: str) -> None:
-    await session.execute(
-        update(RefreshToken)
-        .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
-        .values(revoked_at=utcnow(), revoked_reason=reason)
+async def revoke_all_for_user(
+    session: AsyncSession, user_id: uuid.UUID, reason: str, *, keep_family: uuid.UUID | None = None
+) -> int:
+    stmt = update(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+    if keep_family is not None:
+        stmt = stmt.where(RefreshToken.family_id != keep_family)
+    result = await session.execute(stmt.values(revoked_at=utcnow(), revoked_reason=reason))
+    return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+
+async def list_login_sessions(
+    session: AsyncSession, user_id: uuid.UUID, current: uuid.UUID | None
+) -> list[LoginSessionOut]:
+    """Signed-in devices: one per refresh-token family that still has a live token. The
+    first token of a family marks the sign-in, the live one the last refresh."""
+    now = utcnow()
+    rows = (
+        (
+            await session.execute(
+                select(RefreshToken).where(RefreshToken.user_id == user_id).order_by(RefreshToken.created_at)
+            )
+        )
+        .scalars()
+        .all()
     )
+    first: dict[uuid.UUID, datetime] = {}
+    live: dict[uuid.UUID, RefreshToken] = {}
+    for row in rows:
+        first.setdefault(row.family_id, row.created_at)
+        if row.revoked_at is None and row.expires_at > now:
+            live[row.family_id] = row
+    out = [
+        LoginSessionOut(
+            id=family,
+            signed_in_at=first[family],
+            last_active_at=token.created_at,
+            ip=str(token.created_ip) if token.created_ip else None,
+            user_agent=token.user_agent,
+            current=family == current,
+        )
+        for family, token in live.items()
+    ]
+    return sorted(out, key=lambda s: (not s.current, -s.last_active_at.timestamp()))
 
 
 class RefreshReuseDetected(Unauthorized):

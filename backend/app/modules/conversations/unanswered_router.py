@@ -11,9 +11,10 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import ColumnElement, func, select
 
-from app.api.deps import Requires, TenantContext
+from app.api.deps import Meta, Requires, TenantContext
 from app.api.pagination import Page, PageParams, page_params
 from app.core.errors import NotFound
+from app.modules.audit.service import record
 from app.modules.conversations.models import Contact, Conversation, UnansweredQuestion, UnansweredStatus
 from app.modules.conversations.schemas import UserRef, user_names, user_ref
 from app.modules.rbac.permissions import Permission
@@ -107,7 +108,9 @@ async def list_unanswered(
 
 
 @router.patch("/{question_id}", response_model=UnansweredOut)
-async def update_unanswered(question_id: uuid.UUID, body: UnansweredUpdate, ctx: Manager) -> UnansweredOut:
+async def update_unanswered(
+    question_id: uuid.UUID, body: UnansweredUpdate, ctx: Manager, meta: Meta
+) -> UnansweredOut:
     """Mark a question resolved (the answer is now in the knowledge base or settings),
     dismissed (nothing to add), or open again."""
     row = await ctx.session.get(UnansweredQuestion, question_id)
@@ -118,6 +121,16 @@ async def update_unanswered(question_id: uuid.UUID, body: UnansweredUpdate, ctx:
         row.resolved_by_user_id, row.resolved_at = None, None
     else:
         row.resolved_by_user_id, row.resolved_at = ctx.user.id, datetime.now(UTC)
+    await record(
+        ctx.session,
+        "unanswered.updated",
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user.id,
+        meta=meta,
+        target_type="unanswered_question",
+        target_id=row.id,
+        details={"status": body.status},
+    )
     await ctx.session.flush()
     await ctx.session.refresh(row)
     name = await ctx.session.scalar(

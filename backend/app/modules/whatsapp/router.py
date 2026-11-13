@@ -211,7 +211,7 @@ async def disconnect(account_id: uuid.UUID, ctx: Manager, meta: Meta) -> Disconn
 
 
 @router.post("/numbers/{number_id}/register", response_model=AccountOut)
-async def register_number(number_id: uuid.UUID, ctx: Manager) -> AccountOut:
+async def register_number(number_id: uuid.UUID, ctx: Manager, meta: Meta) -> AccountOut:
     """Retry Cloud API registration for a number that Meta did not register at sign-up."""
     number = await service.get_number(ctx.session, ctx.tenant_id, number_id)
     account = await service.get_account(ctx.session, ctx.tenant_id, number.account_id)
@@ -221,6 +221,15 @@ async def register_number(number_id: uuid.UUID, ctx: Manager) -> AccountOut:
         await service.retry_registration(ctx.session, account, number)
     except GraphError as exc:
         raise service.meta_error(exc, "Meta did not register the number.") from exc
+    await record(
+        ctx.session,
+        "whatsapp.number_registered",
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user.id,
+        meta=meta,
+        target_type="whatsapp_number",
+        target_id=number.id,
+    )
     return await _account_out(ctx, account)
 
 
@@ -265,7 +274,7 @@ async def list_templates(
 
 
 @router.post("/accounts/{account_id}/templates/sync", response_model=TemplateSyncOut)
-async def sync_templates(account_id: uuid.UUID, ctx: Manager) -> TemplateSyncOut:
+async def sync_templates(account_id: uuid.UUID, ctx: Manager, meta: Meta) -> TemplateSyncOut:
     account = await service.get_account(ctx.session, ctx.tenant_id, account_id)
     if account.status != AccountStatus.CONNECTED:
         raise ValidationFailed(
@@ -273,4 +282,14 @@ async def sync_templates(account_id: uuid.UUID, ctx: Manager) -> TemplateSyncOut
         )
     async with GraphClient() as graph:
         count = await service.sync_templates(ctx.session, account, graph)
+    await record(
+        ctx.session,
+        "whatsapp.templates_synced",
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user.id,
+        meta=meta,
+        target_type="whatsapp_account",
+        target_id=account.id,
+        details={"templates": count},
+    )
     return TemplateSyncOut(synced=count)
