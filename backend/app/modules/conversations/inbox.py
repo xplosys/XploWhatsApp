@@ -85,13 +85,23 @@ async def assign(
 
 
 async def unassign_member(session: AsyncSession, tenant_id: uuid.UUID, user_id: uuid.UUID) -> None:
-    """When someone leaves a business their conversations go back to the shared queue."""
+    """When someone leaves a business their conversations, open takeovers and leads go
+    back to the shared queue."""
     from app.modules.leads.models import Lead
 
     await session.execute(
         update(Conversation)
         .where(Conversation.tenant_id == tenant_id, Conversation.assigned_user_id == user_id)
         .values(assigned_user_id=None, assigned_at=None)
+    )
+    await session.execute(
+        update(HandoverSession)
+        .where(
+            HandoverSession.tenant_id == tenant_id,
+            HandoverSession.agent_user_id == user_id,
+            HandoverSession.released_at.is_(None),
+        )
+        .values(agent_user_id=None)
     )
     await session.execute(
         update(Lead)

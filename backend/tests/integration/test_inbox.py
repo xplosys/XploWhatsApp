@@ -192,6 +192,7 @@ async def test_assignment_rules(team: dict[str, Actor], client: httpx.AsyncClien
 
     # Removing a member returns their conversations and leads to the shared queue.
     await agent.put(url, json={"user_id": agent.user_id})
+    await agent.post(f"{API}/conversations/{conv_id}/takeover")
     lead = await agent.post(
         f"{API}/leads",
         json={"conversation_id": conv_id, "title": "Whitening", "owner_user_id": agent.user_id},
@@ -200,7 +201,8 @@ async def test_assignment_rules(team: dict[str, Actor], client: httpx.AsyncClien
     members = (await owner.get(f"{API}/tenants/current/members")).json()["items"]
     mid = next(m["id"] for m in members if m["email"] == "asha@sunrisedental.in")
     assert (await owner.delete(f"{API}/tenants/current/members/{mid}")).status_code == 204
-    assert (await owner.get(f"{API}/conversations/{conv_id}")).json()["assigned_to"] is None
+    after = (await owner.get(f"{API}/conversations/{conv_id}")).json()
+    assert after["assigned_to"] is None and after["handover"]["agent"] is None
     assert (await owner.get(f"{API}/leads/{lead.json()['id']}")).json()["owner"] is None
 
     actions = [e["action"] for e in (await owner.get(f"{API}/audit-logs")).json()["items"]]

@@ -51,6 +51,7 @@ function emptyConfig(models: AIModel[]): AssistantConfig {
     reply_language: "match_customer",
     handover_message: "Thanks for your message. A member of our team will reply to you shortly.",
     max_reply_chars: 1000,
+    summary_on_handover: true,
     primary: { provider: first?.provider ?? "gemini", model: first?.model_id ?? "" },
     fallbacks: [],
   };
@@ -447,6 +448,18 @@ function AssistantForm({
           onChange={(e) => set("handover_message", e.target.value)}
           required
         />
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={draft.summary_on_handover ?? true}
+            onChange={(e) => set("summary_on_handover", e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-[var(--xp-brand)]"
+          />
+          <span>
+            Write a short summary for your team when the assistant hands over
+            <span className="block text-xs text-muted">Uses the models below and counts toward AI usage.</span>
+          </span>
+        </label>
         <div className="space-y-3 rounded-control bg-surface-muted p-4">
           <ModelSelect label="Main model" value={draft.primary} models={models} onChange={(v) => set("primary", v)} />
           {draft.fallbacks.map((f, i) => (
