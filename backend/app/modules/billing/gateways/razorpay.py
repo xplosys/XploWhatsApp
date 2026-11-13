@@ -25,6 +25,7 @@ from app.modules.billing.gateways.base import (
     GatewaySubscription,
     PaymentGateway,
     minor_units,
+    response_json,
     transport,
     with_tax,
 )
@@ -93,7 +94,7 @@ class Razorpay(PaymentGateway):
             except httpx.HTTPError as exc:
                 log.warning("razorpay_unreachable", path=path, error=str(exc))
                 raise GatewayError() from exc
-        data: dict[str, Any] = r.json() if r.content else {}
+        data = response_json(r)
         if r.status_code >= 400:
             err = data.get("error") or {}
             log.warning("razorpay_error", path=path, status=r.status_code, code=err.get("code"))

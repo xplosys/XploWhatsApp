@@ -56,6 +56,18 @@ def minor_units(amount: Decimal) -> int:
     return int(money(amount) * 100)
 
 
+def response_json(r: httpx.Response) -> dict[str, Any]:
+    """The gateway's JSON body, or {} when it sent none or something else (a proxy's
+    error page, say): the caller then reports a gateway error instead of crashing."""
+    if not r.content:
+        return {}
+    try:
+        data = r.json()
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def from_minor(value: int | str | None) -> Decimal:
     return money(Decimal(int(value or 0)) / 100)
 

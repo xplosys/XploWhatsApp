@@ -1,5 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.core.config import get_settings
+from app.core.rate_limit import rate_limit
 from app.modules.admin.router import router as admin_router
 from app.modules.ai.admin_router import router as ai_admin_router
 from app.modules.ai.router import router as ai_router
@@ -39,7 +41,11 @@ for r in (
     unanswered_router,
     knowledge_router,
     analytics_router,
-    webhooks_router,
-    billing_webhooks_router,
 ):
     api_router.include_router(r)
+
+# Gateways and Meta sign every event, but a flood of unsigned requests still costs a
+# signature check each, so each sender address gets a generous per-minute budget.
+webhook_rate_limit = Depends(rate_limit("webhook", lambda: get_settings().rate_limit_webhook_per_minute))
+for r in (webhooks_router, billing_webhooks_router):
+    api_router.include_router(r, dependencies=[webhook_rate_limit])

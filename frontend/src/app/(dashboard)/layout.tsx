@@ -26,6 +26,7 @@ const NAV = [
   { href: "/team", label: "Team", permission: "members:read" },
   { href: "/billing", label: "Billing", permission: "billing:read" },
   { href: "/settings", label: "Business settings", permission: "tenant:read" },
+  { href: "/settings/privacy", label: "Privacy & security", permission: "security:manage" },
   { href: "/account", label: "Account & security" },
 ];
 
@@ -178,7 +179,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {!me.active_tenant_id && !me.user.is_super_admin && (
             <Alert tone="info">You are not a member of any business yet. Ask an owner to invite you.</Alert>
           )}
-          {children}
+          {me.mfa_required && pathname !== "/account" ? (
+            <Alert tone="warning">
+              <p className="font-medium">{active?.tenant_name ?? "This business"} requires two-factor authentication.</p>
+              <p className="mt-1">
+                Turn it on for your account to keep working here. It takes a minute with an authenticator app such as Google
+                Authenticator or Microsoft Authenticator.
+              </p>
+              <Link href="/account" className="mt-2 inline-block font-semibold underline">
+                Set up two-factor authentication
+              </Link>
+            </Alert>
+          ) : (
+            children
+          )}
         </div>
       </main>
     </div>

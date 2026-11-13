@@ -1,7 +1,7 @@
 # XploWhatsApp — project status
 
 **Last updated:** 2026-11-13
-**Current phase:** Phase 7 complete, awaiting approval to start Phase 8 (security hardening)
+**Current phase:** Phase 8 complete, awaiting approval to start Phase 9 (monitoring and deployment)
 
 ## Phase tracker
 
@@ -14,10 +14,73 @@
 | 4. RAG knowledge engine | Done (PR #4) | See Phase 4 report and docs/KNOWLEDGE.md |
 | 5. Conversation management | Done (PR #5) | See Phase 5 report and docs/CONVERSATIONS.md |
 | 6. Customer dashboard | Done (PR #6) | See Phase 6 report and docs/ANALYTICS.md |
-| 7. Billing and subscriptions | Done, awaiting review | See Phase 7 report and docs/BILLING.md |
-| 8. Security hardening | Not started | |
+| 7. Billing and subscriptions | Done, awaiting review (PR #7) | See Phase 7 report and docs/BILLING.md |
+| 8. Security hardening | Done, awaiting review | See Phase 8 report and docs/SECURITY.md |
 | 9. Monitoring and deployment | Not started | |
 | 10. Production testing and release | Not started | |
+
+## Phase 8 report
+
+### What is complete
+
+- **Sessions (ADR 046):** an access token works only while its sign-in is live, so signing a device out takes effect at once. Account & security lists every signed-in device with "Sign out" and "Sign out other devices". Turning two-factor on starts a fresh two-factor-verified sign-in.
+- **Two-factor for the whole team (ADR 047):** an owner can require it in Privacy & security; members without it see a notice and can only reach their account page. Using a recovery code is audited. Super Admin already required it.
+- **Rate limits and client IP (ADR 048):** per-person limit on every signed-in request, per-sender limit on webhooks, sign-in limits per IP; `X-Real-IP` is believed only from `TRUSTED_PROXIES`.
+- **Headers:** a strict CSP, Permissions-Policy, COOP and CORP on the API, plus HSTS outside development. The web app uses a per-request nonce CSP with `'strict-dynamic'` (ADR 054); Razorpay Checkout was checked to work under it.
+- **Key rotation (ADR 052):** `rotate-jwt-key`, `new-encryption-key` and `rewrap-secrets [--dry-run]`, with a runbook in docs/SECURITY.md.
+- **Audit coverage (ADR 053):** every route that changes data is audited or listed with a reason; seven routes gained audit entries (number registration, template sync, notes, knowledge retries, unanswered questions, sessions).
+- **Prompt injection (ADR 049):** prompt-frame imitation is removed from business settings and documents; prices, discounts and links must come from the business, not the customer; invisible characters can't hide a leak.
+- **Privacy tools (ADRs 050, 051):** contact erasure; full data export as a zip of JSON Lines (owner, emailed, 7-day link, audited downloads); business deletion with a 30-day restore window, Super Admin restore, then a purge that keeps only invoices, payments and the audit log; account self-deletion; per-business message retention; webhook payloads removed after 30 days. Migration 0007.
+- **CI:** pip-audit, pnpm audit, gitleaks over the full history, and Trivy on both images.
+- **Fix found in the walkthrough:** a gateway reply that wasn't JSON (a proxy's error page) crashed checkout with a 500; it is now a clean "gateway error".
+- **docs/SECURITY.md:** threat model, controls, key rotation, incident response with DPDP and GDPR notification timelines, pen-test checklist, and the data tools.
+
+### Tests
+
+- Backend: 311 tests, all passing (54 new). They cover:
+  - sessions signed out remotely;
+  - two-factor required by a business, and turning it off refused;
+  - per-person and webhook rate limits, and spoofed forwarded IPs;
+  - security headers;
+  - contact erasure;
+  - data export and its contents;
+  - business deletion, restore and purge;
+  - a paid plan blocking deletion;
+  - account deletion;
+  - message retention and webhook payload cleanup;
+  - JWT rotation keeping issued tokens valid;
+  - rewrapping every secret, and the all-or-nothing refusal;
+  - the audit coverage check;
+  - upload abuse: path traversal names, disguised files, missing sizes, downloads forced as attachments, and documents posing as instructions;
+  - prompt injection: frame breaking, customer-supplied prices and links, leaks hidden with invisible characters;
+  - non-JSON gateway errors.
+
+  RLS tests include `data_exports`.
+- `ruff`, `mypy --strict`, `eslint`, `tsc`, `next build` and `alembic check`: clean. pip-audit and pnpm audit: no known vulnerabilities.
+- Browser walkthrough against the running stack (screenshots in the project files under `phase8/`):
+  - signed-in devices and a remote sign-out;
+  - privacy page before and after two-factor;
+  - an agent blocked until they set up two-factor;
+  - contact erasure;
+  - export ready and downloaded;
+  - Razorpay Checkout under the CSP;
+  - deleting a business and the Super Admin restore list;
+  - dark mode;
+  - a phone at 390 px with no sideways scrolling.
+
+  No CSP violations were reported.
+
+### Not verified here
+
+- gitleaks and Trivy run only in CI; this sandbox couldn't fetch them. pip-audit and pnpm audit ran here.
+- No external penetration test yet; the checklist in docs/SECURITY.md is ready for one.
+
+### Known limitations of Phase 8
+
+- Key rotation is a manual runbook, not automatic.
+- The breached-password check (HIBP) is not built.
+- Two-factor is by authenticator app only; there are no passkeys or SMS codes.
+- Business deletion keeps the tenant row, anonymised, so invoice numbers and the audit log stay valid.
 
 ## Phase 7 report
 
@@ -242,10 +305,10 @@
 
 ## Open decisions (need the owner's input)
 
-1. Approve Phase 7 and start Phase 8 (security hardening).
+1. Approve Phase 8 and start Phase 9 (monitoring and deployment).
 2. Production object storage provider (decided by Phase 9).
 3. Billing entity for UK/US customers (affects Stripe), and the GST details for invoices: SAC code, LUT number, invoice prefix (docs/BILLING.md).
-4. Legal review of Meta's WhatsApp Business Solution Terms for AI use, and of DPDP/GDPR obligations.
+4. Legal review of Meta's WhatsApp Business Solution Terms for AI use, of DPDP/GDPR obligations, and of the breach notification steps in docs/SECURITY.md.
 
 ## Actions for XploSys outside the code (start now)
 

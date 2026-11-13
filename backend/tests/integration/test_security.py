@@ -151,6 +151,14 @@ async def test_signed_in_requests_are_rate_limited_per_person(
     assert (await other.get(f"{API}/auth/me")).status_code == 200
 
 
+async def test_webhooks_are_rate_limited_per_sender(
+    client: httpx.AsyncClient, database: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "rate_limit_webhook_per_minute", 2)
+    codes = [(await client.post(f"{API}/webhooks/stripe", content=b"{}")).status_code for _ in range(3)]
+    assert codes[-1] == 429 and 429 not in codes[:2]
+
+
 async def test_forwarded_address_is_only_believed_from_a_trusted_proxy() -> None:
     from starlette.requests import Request
 

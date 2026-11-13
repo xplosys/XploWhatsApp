@@ -1,16 +1,193 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import QRCode from "qrcode";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { TextField } from "@/components/ui/Field";
-import { api, errorMessage } from "@/lib/api/client";
-import type { SessionResponse } from "@/lib/api/types";
+import { ApiError, api, errorMessage } from "@/lib/api/client";
+import type { LoginSession, SessionResponse } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { formatDateTime } from "@/lib/locale";
+
+/** "Chrome on Windows" from a user agent, or the raw string when it isn't recognised. */
+function describeDevice(ua: string | null): string {
+  if (!ua) return "Unknown device";
+  const browser = /Edg\//.test(ua)
+    ? "Edge"
+    : /OPR\//.test(ua)
+      ? "Opera"
+      : /Firefox\//.test(ua)
+        ? "Firefox"
+        : /Chrome\//.test(ua)
+          ? "Chrome"
+          : /Safari\//.test(ua)
+            ? "Safari"
+            : null;
+  const os = /Windows/.test(ua)
+    ? "Windows"
+    : /Android/.test(ua)
+      ? "Android"
+      : /iPhone|iPad/.test(ua)
+        ? "iOS"
+        : /Mac OS X/.test(ua)
+          ? "macOS"
+          : /Linux/.test(ua)
+            ? "Linux"
+            : null;
+  if (browser && os) return `${browser} on ${os}`;
+  return browser ?? os ?? ua.slice(0, 60);
+}
+
+function Sessions() {
+  const [sessions, setSessions] = useState<LoginSession[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(
+    () =>
+      api<LoginSession[]>("/auth/sessions").then(
+        (s) => setSessions(s),
+        (err) => setError(errorMessage(err)),
+      ),
+    [],
+  );
+  useEffect(() => {
+    void Promise.resolve().then(load);
+  }, [load]);
+
+  async function run(key: string, fn: () => Promise<unknown>, done: string) {
+    setBusy(key);
+    setError(null);
+    setNotice(null);
+    try {
+      await fn();
+      setNotice(done);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const others = sessions?.filter((s) => !s.current).length ?? 0;
+  return (
+    <Card
+      title="Where you're signed in"
+      description="Signing a device out ends its session at once, not when it next refreshes."
+      actions={
+        others > 0 && (
+          <Button
+            variant="secondary"
+            loading={busy === "others"}
+            onClick={() => run("others", () => api("/auth/sessions/revoke-others", { method: "POST" }), "Signed out of every other device.")}
+          >
+            Sign out other devices
+          </Button>
+        )
+      }
+    >
+      {error && <Alert tone="error">{error}</Alert>}
+      {notice && <Alert tone="success">{notice}</Alert>}
+      {sessions && (
+        <ul className="divide-y divide-line">
+          {sessions.map((s) => (
+            <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  {describeDevice(s.user_agent)}
+                  {s.current && <Badge tone="success">This device</Badge>}
+                </p>
+                <p className="text-xs text-muted">
+                  {s.ip ?? "Unknown address"} · signed in {formatDateTime(s.signed_in_at)} · last active {formatDateTime(s.last_active_at)}
+                </p>
+              </div>
+              {!s.current && (
+                <Button
+                  variant="ghost"
+                  loading={busy === s.id}
+                  onClick={() => run(s.id, () => api(`/auth/sessions/${s.id}`, { method: "DELETE" }), "That device was signed out.")}
+                >
+                  Sign out
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+function DeleteAccount() {
+  const { me, logout } = useAuth();
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<{ text: string; businesses?: string[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (!me || me.user.is_super_admin) return null;
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/auth/me", { method: "DELETE", body: { password, code: code.trim() || undefined } });
+      await logout();
+      router.replace("/login");
+    } catch (err) {
+      const details = err instanceof ApiError ? (err.details as { businesses?: string[] } | null | undefined) : null;
+      setError({ text: errorMessage(err), businesses: details?.businesses });
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card title="Delete your account" description="Removes your name, email and sign-in details, and takes you out of every business.">
+      {!open ? (
+        <Button variant="danger" onClick={() => setOpen(true)}>
+          Delete my account
+        </Button>
+      ) : (
+        <form onSubmit={onSubmit} className="space-y-4">
+          <Alert tone="warning">
+            This can&apos;t be undone. Messages you sent to customers stay with the business that sent them, shown as from
+            &quot;Deleted user&quot;. If you are the only owner of a business, make someone else an owner or delete the business
+            first.
+          </Alert>
+          {error && (
+            <Alert tone="error">
+              {error.text}
+              {error.businesses && error.businesses.length > 0 && <span className="block font-medium">{error.businesses.join(", ")}</span>}
+            </Alert>
+          )}
+          <div className="grid gap-4 md:grid-cols-2">
+            <TextField label="Password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            {me.user.mfa_enabled && (
+              <TextField label="Code from your authenticator app" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} required />
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" variant="danger" loading={busy} disabled={!password}>
+              Delete my account permanently
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => setOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </Card>
+  );
+}
 
 function ChangePassword() {
   const { acceptSession } = useAuth();
@@ -161,6 +338,8 @@ export default function AccountPage() {
       </header>
       <TwoFactor />
       <ChangePassword />
+      <Sessions />
+      <DeleteAccount />
     </>
   );
 }

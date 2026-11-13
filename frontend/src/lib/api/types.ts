@@ -41,6 +41,42 @@ export interface Me {
   permissions: string[];
   memberships: MembershipSummary[];
   mfa_verified: boolean;
+  /** The active business requires two-factor sign-in and this session doesn't have it. */
+  mfa_required: boolean;
+}
+
+/** A device or browser where the account is signed in. */
+export interface LoginSession {
+  id: string;
+  signed_in_at: string;
+  last_active_at: string;
+  ip: string | null;
+  user_agent: string | null;
+  current: boolean;
+}
+
+export interface SecuritySettings {
+  require_mfa: boolean;
+  message_retention_days: number | null;
+  members_without_mfa: number;
+}
+
+export interface DataExport {
+  id: string;
+  status: "queued" | "running" | "ready" | "failed" | "expired";
+  size_bytes: number | null;
+  error: string | null;
+  created_at: string;
+  completed_at: string | null;
+  expires_at: string | null;
+}
+
+export interface DeletedTenant {
+  id: string;
+  name: string;
+  slug: string;
+  deleted_at: string;
+  purge_after: string | null;
 }
 
 export interface Tenant {

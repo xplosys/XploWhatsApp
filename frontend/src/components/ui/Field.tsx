@@ -28,10 +28,12 @@ export function TextField({
 export function SelectField({
   label,
   options,
+  hint,
   ...props
 }: React.SelectHTMLAttributes<HTMLSelectElement> & {
   label: string;
   options: { value: string; label: string }[];
+  hint?: string;
 }) {
   const id = useId();
   return (
@@ -46,6 +48,7 @@ export function SelectField({
           </option>
         ))}
       </select>
+      {hint && <p className="text-xs text-muted">{hint}</p>}
     </div>
   );
 }
