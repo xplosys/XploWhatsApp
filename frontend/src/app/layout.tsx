@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 
+import { ErrorReporting } from "@/components/ErrorReporting";
 import { themeInitScript } from "@/components/ThemeToggle";
 import { AuthProvider } from "@/lib/auth/AuthProvider";
 
@@ -22,6 +23,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // Set by src/proxy.ts with the page's Content-Security-Policy. Reading it renders every
   // page per request, which a nonce needs.
   const nonce = (await headers()).get("x-nonce") ?? undefined;
+  // Read at request time, so one image serves every environment.
+  const sentryDsn = process.env.SENTRY_DSN_WEB;
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -36,6 +39,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         />
       </head>
       <body>
+        {sentryDsn && (
+          <ErrorReporting
+            dsn={sentryDsn}
+            environment={process.env.ENVIRONMENT ?? "development"}
+            release={`xplowhatsapp@${process.env.APP_VERSION ?? "dev"}`}
+          />
+        )}
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>

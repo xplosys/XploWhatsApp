@@ -17,8 +17,13 @@ COPY alembic.ini ./
 COPY alembic ./alembic
 COPY app ./app
 ENV PATH="/app/.venv/bin:$PATH"
+# The git commit, set by CI; tags errors in Sentry and the version in metrics.
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2).status == 200 else 1)"
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# The app reads the client address itself, trusting X-Real-IP only from TRUSTED_PROXIES
+# (Nginx). Uvicorn must not rewrite it from X-Forwarded-For, which any client can send.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

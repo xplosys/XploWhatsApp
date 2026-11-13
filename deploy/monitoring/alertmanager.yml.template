@@ -1,0 +1,31 @@
+# Rendered to deploy/secrets/alertmanager.yml by deploy/scripts/render-config.sh from .env;
+# each placeholder becomes a quoted YAML string.
+# Critical alerts repeat every hour until fixed; warnings every 4 hours.
+global:
+  smtp_smarthost: ${SMTP_SMARTHOST}
+  smtp_from: ${ALERT_EMAIL_FROM}
+  smtp_auth_username: ${SMTP_USERNAME}
+  smtp_auth_password: ${SMTP_PASSWORD}
+  smtp_require_tls: ${ALERT_SMTP_REQUIRE_TLS}
+
+route:
+  receiver: team
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: [severity="critical"]
+      receiver: team
+      repeat_interval: 1h
+
+receivers:
+  - name: team
+    email_configs:
+      - to: ${ALERT_EMAIL_TO}
+        send_resolved: true
+
+inhibit_rules:
+  # When a service is down, don't also report everything that follows from it.
+  - source_matchers: [alertname="ServiceDown"]
+    target_matchers: [severity="warning"]

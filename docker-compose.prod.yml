@@ -1,0 +1,336 @@
+# Production stack for one Ubuntu server (docs/DEPLOYMENT_UBUNTU.md).
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+#
+# COMPOSE_PROFILES in .env picks the optional parts: monitoring (Prometheus, Alertmanager,
+# Grafana, exporters) and storage (self-hosted SeaweedFS). The ops profile holds the backup
+# jobs, which only run on demand (deploy/scripts/backup.sh).
+#
+# Images come from the registry CI pushes to (IMAGE_PREFIX, IMAGE_TAG); nothing is built
+# on the server. Only Nginx publishes ports (80, 443) to the world. Grafana (3001),
+# Prometheus (9090) and Alertmanager (9093) listen on 127.0.0.1 for an SSH tunnel. Every
+# other service is reachable only on the private network.
+name: xplowhatsapp
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
+
+x-backend: &backend
+  image: ${IMAGE_PREFIX:-ghcr.io/xplosys/xplowhatsapp}-api:${IMAGE_TAG:?set IMAGE_TAG (the release to run)}
+  restart: unless-stopped
+  logging: *logging
+  env_file: .env
+  environment: &backend-env
+    ENVIRONMENT: ${ENVIRONMENT:-production}
+    LOG_JSON: "true"
+    COOKIE_SECURE: "true"
+    EMAIL_BACKEND: smtp
+    DATABASE_URL: postgresql+asyncpg://xplo_app:${XPLO_APP_PASSWORD:?}@postgres:5432/xplowhatsapp
+    DATABASE_ADMIN_URL: postgresql+asyncpg://xplo_admin:${XPLO_ADMIN_PASSWORD:?}@postgres:5432/xplowhatsapp
+    DATABASE_OWNER_URL: postgresql+asyncpg://xplo_owner:${XPLO_OWNER_PASSWORD:?}@postgres:5432/xplowhatsapp
+    REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/0
+    CLAMAV_HOST: clamav
+    # Nginx is the only proxy in front of the API: trust X-Real-IP from this network only.
+    TRUSTED_PROXIES: 172.28.0.0/16
+    PROMETHEUS_MULTIPROC_DIR: /tmp/metrics
+  tmpfs:
+    - /tmp/metrics
+  networks: [internal]
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    logging: *logging
+    shm_size: 256mb
+    environment:
+      POSTGRES_DB: xplowhatsapp
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    command: ["postgres", "-c", "shared_buffers=${PG_SHARED_BUFFERS:-512MB}", "-c", "max_connections=200",
+              "-c", "log_min_duration_statement=1000", "-c", "shared_preload_libraries=pg_stat_statements"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d xplowhatsapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [internal]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    logging: *logging
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?}",
+              "--maxmemory-policy", "noeviction"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [internal]
+
+  # One-shot on every deploy: roles, migrations, plan seed, bucket.
+  migrate:
+    <<: *backend
+    restart: "no"
+    environment:
+      <<: *backend-env
+      DATABASE_SUPERUSER_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@postgres:5432/xplowhatsapp
+    command: ["sh", "-c", "python -m app.cli bootstrap-db && alembic upgrade head && python -m app.cli seed && python -m app.cli ensure-bucket"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers",
+              "--workers", "${API_WORKERS:-2}"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  worker:
+    <<: *backend
+    command: ["celery", "-A", "app.workers.celery_app", "worker", "-Q", "default,messages,knowledge",
+              "--loglevel=INFO", "--concurrency=${WORKER_CONCURRENCY:-4}"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  beat:
+    <<: *backend
+    command: ["celery", "-A", "app.workers.celery_app", "beat", "--loglevel=INFO", "--schedule", "/tmp/celerybeat-schedule"]
+    healthcheck:
+      disable: true
+    depends_on:
+      redis: { condition: service_healthy }
+
+  frontend:
+    image: ${IMAGE_PREFIX:-ghcr.io/xplosys/xplowhatsapp}-frontend:${IMAGE_TAG:?}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      SENTRY_DSN_WEB: ${SENTRY_DSN_WEB:-}
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [internal]
+
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    logging: *logging
+    volumes:
+      - clamav-data:/var/lib/clamav
+    networks: [internal]
+
+  # Self-hosted S3 storage for knowledge files and exports. Skip this profile when S3_*
+  # points at a managed bucket (docs/DEPLOYMENT_UBUNTU.md, "Object storage").
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.50
+    profiles: ["storage"]
+    restart: unless-stopped
+    logging: *logging
+    command: ["mini", "-dir=/data"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+    volumes:
+      - object-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+    networks: [internal]
+
+  nginx:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN, e.g. app.xplowhatsapp.com}
+      FILES_DOMAIN: ${FILES_DOMAIN:-}
+      UPLOAD_LIMIT_MB: ${NGINX_UPLOAD_LIMIT_MB:-22}
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx/xplo
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx/templates:/etc/nginx/templates:ro
+      - ./deploy/nginx/40-xplo-sites.sh:/docker-entrypoint.d/40-xplo-sites.sh:ro
+      - letsencrypt:/etc/letsencrypt:ro
+      - acme-webroot:/var/www/acme:ro
+    tmpfs:
+      - /etc/nginx/xplo
+    depends_on:
+      - frontend
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    networks: [internal]
+
+  # Renews certificates twice a day; Nginx reloads them every six hours.
+  certbot:
+    image: certbot/certbot:v4.1.1
+    restart: unless-stopped
+    logging: *logging
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/acme --quiet; sleep 12h & wait $$!; done"]
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - acme-webroot:/var/www/acme
+    networks: [internal]
+
+  # ---- monitoring (profile "monitoring") ----------------------------------------------
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    logging: *logging
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus",
+              "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}",
+              # Alert emails link here; open it through the SSH tunnel (DEPLOYMENT_UBUNTU.md).
+              "--web.external-url=http://localhost:9090"]
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/monitoring/rules:/etc/prometheus/rules:ro
+      - ./deploy/secrets/metrics_token:/etc/prometheus/metrics_token:ro
+      - prometheus-data:/prometheus
+    networks: [internal]
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    logging: *logging
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager",
+              "--web.external-url=http://localhost:9093"]
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./deploy/secrets/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks: [internal]
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3001
+    volumes:
+      - ./deploy/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3001:3000"
+    networks: [internal]
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    logging: *logging
+    command: ["--path.rootfs=/host", "--collector.textfile.directory=/textfile"]
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+      - ./backups/status:/textfile:ro
+    networks: [internal]
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      DATA_SOURCE_NAME: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/xplowhatsapp?sslmode=disable
+    networks: [internal]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.74.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks: [internal]
+
+  # ---- backups (run by the systemd timers in deploy/systemd) ----------------------------
+
+  backup:
+    image: pgvector/pgvector:pg17
+    profiles: ["ops"]
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: xplowhatsapp
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    entrypoint: ["/bin/bash", "/scripts/backup.sh"]
+    volumes:
+      - ./deploy/backup:/scripts:ro
+      # backup-public-key.asc to encrypt; backup-private-key.asc (if installed) for the
+      # weekly restore check and for restores.
+      - ./deploy/secrets:/keys:ro
+      - ./backups:/backups
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [internal]
+
+  # Copies ./backups (and the self-hosted bucket, if any) to off-site storage.
+  backup-offsite:
+    image: rclone/rclone:1.71.1
+    profiles: ["ops"]
+    restart: "no"
+    env_file: .env
+    entrypoint: ["/bin/sh", "/scripts/offsite.sh"]
+    volumes:
+      - ./deploy/backup:/scripts:ro
+      - ./backups:/backups
+    networks: [internal]
+
+volumes:
+  postgres-data:
+  redis-data:
+  object-data:
+  clamav-data:
+  letsencrypt:
+  acme-webroot:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
+
+networks:
+  internal:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

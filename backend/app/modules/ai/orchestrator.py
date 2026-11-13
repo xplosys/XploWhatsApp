@@ -15,6 +15,7 @@ from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import metrics
 from app.core.config import get_settings
 from app.modules.ai import catalogue, registry
 from app.modules.ai.assistant import AssistantConfig
@@ -88,6 +89,29 @@ async def prepare_chain(
 
 
 async def run(
+    steps: list[ChainStep],
+    config: AssistantConfig,
+    *,
+    business_name: str,
+    default_language: str,
+    turns: list[Turn],
+    knowledge: Sequence[Passage] = (),
+    retrieval: dict[str, object] | None = None,
+) -> Outcome:
+    outcome = await _run(
+        steps,
+        config,
+        business_name=business_name,
+        default_language=default_language,
+        turns=turns,
+        knowledge=knowledge,
+        retrieval=retrieval,
+    )
+    metrics.observe_ai(outcome.attempts)
+    return outcome
+
+
+async def _run(
     steps: list[ChainStep],
     config: AssistantConfig,
     *,

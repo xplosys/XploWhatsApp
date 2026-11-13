@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the XploWhatsApp backup every night
+
+[Timer]
+# 02:30 India time (21:00 UTC), when traffic is lowest.
+OnCalendar=*-*-* 21:00:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

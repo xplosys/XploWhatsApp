@@ -1,0 +1,135 @@
+# Alert rules. Each says what is wrong and where to look first. Tested by
+# deploy/monitoring/tests/xplowhatsapp.test.yml (promtool test rules) in CI.
+groups:
+  - name: availability
+    rules:
+      - alert: ServiceDown
+        expr: up{job=~"api|worker|postgres|redis|node"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }} is not answering"
+          description: "Prometheus has not reached {{ $labels.job }} for 2 minutes. Check `docker compose ps` and its logs."
+
+      - alert: ApiErrorRateHigh
+        expr: |
+          sum(rate(xplo_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(xplo_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than 5% of API requests are failing"
+          description: "{{ $value | humanizePercentage }} of requests returned 5xx over 5 minutes. Sentry has the errors."
+
+      - alert: ApiSlow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(xplo_http_request_duration_seconds_bucket{route!~".*/webhooks/.*"}[5m]))) > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "API p95 latency above 2 s"
+          description: "95th percentile is {{ $value | humanizeDuration }}. Check database load and slow queries."
+
+  - name: messaging
+    rules:
+      - alert: QueueBacklog
+        expr: max by (queue) (xplo_queue_depth) > 500
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Queue {{ $labels.queue }} has {{ $value }} waiting tasks"
+          description: "Workers are not keeping up. Check the worker's health and WORKER_CONCURRENCY."
+
+      - alert: MessageSendsFailing
+        expr: |
+          sum(increase(xplo_task_runs_total{task="messages.send_outbox_job",result="failed"}[15m]))
+            / clamp_min(sum(increase(xplo_task_runs_total{task="messages.send_outbox_job"}[15m])), 1) > 0.2
+          and sum(increase(xplo_task_runs_total{task="messages.send_outbox_job"}[15m])) > 10
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than 20% of WhatsApp sends are failing"
+          description: "Check Meta's status page and accounts needing reconnection (Super Admin)."
+
+      - alert: TasksErroring
+        expr: sum by (task) (increase(xplo_task_runs_total{result="error"}[15m])) > 5
+        labels: { severity: warning }
+        annotations:
+          summary: "Task {{ $labels.task }} raised {{ $value }} errors in 15 minutes"
+          description: "Sentry has the tracebacks."
+
+      - alert: AiProviderFailing
+        expr: |
+          sum by (provider) (increase(xplo_ai_attempts_total{result!~"ok|skipped|invalid"}[15m]))
+            / clamp_min(sum by (provider) (increase(xplo_ai_attempts_total{result!="skipped"}[15m])), 1) > 0.3
+          and sum by (provider) (increase(xplo_ai_attempts_total[15m])) > 10
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.provider }} is failing for {{ $value | humanizePercentage }} of calls"
+          description: "Replies fall back to the next model or to a person. Check the provider's status and the platform key."
+
+  - name: data
+    rules:
+      - alert: BackupMissing
+        expr: time() - xplo_backup_last_success_timestamp_seconds > 26 * 3600
+        labels: { severity: critical }
+        annotations:
+          summary: "No database backup in over 26 hours"
+          description: "Run `systemctl status xplo-backup.timer` and check the last backup log."
+
+      - alert: BackupNeverRan
+        expr: absent(xplo_backup_last_success_timestamp_seconds)
+        for: 26h
+        labels: { severity: critical }
+        annotations:
+          summary: "No backup has ever been recorded"
+          description: "Install the backup timer (docs/DEPLOYMENT_UBUNTU.md, Backups)."
+
+      - alert: OffsiteCopyStale
+        expr: time() - xplo_backup_offsite_last_success_timestamp_seconds > 30 * 3600
+        labels: { severity: critical }
+        annotations:
+          summary: "Backups have not been copied off-site in over 30 hours"
+          description: "A server loss now would lose data. Check the last backup log (journalctl -u xplo-backup)."
+
+      - alert: RestoreCheckStale
+        expr: time() - xplo_backup_last_verified_timestamp_seconds > 8 * 86400
+        labels: { severity: warning }
+        annotations:
+          summary: "The weekly restore check has not passed in over 8 days"
+          description: "Run deploy/scripts/backup.sh verify and read its output."
+
+      - alert: DiskFilling
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}
+            / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}) < 0.15
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Less than 15% disk left"
+          description: "Old Docker images (docker image prune) and local backups are the usual culprits."
+
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.8
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Postgres is using over 80% of its connections"
+          description: "Check for stuck transactions in pg_stat_activity."
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / clamp_min(node_memory_MemTotal_bytes, 1) > 0.25
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Redis uses over a quarter of the server's memory"
+          description: "Usually a growing queue. Check QueueBacklog and the workers."
+
+      - alert: MemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Less than 10% memory available"
+          description: "ClamAV and the workers are the largest users; consider a larger server."

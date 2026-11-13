@@ -11,3 +11,8 @@ node_modules/
 
 # Celery beat local schedule
 celerybeat-schedule*
+
+# Production server state (docs/DEPLOYMENT_UBUNTU.md)
+/backups/
+/deploy/secrets/*
+!/deploy/secrets/README.md

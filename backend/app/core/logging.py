@@ -17,13 +17,13 @@ _BEARER = re.compile(r"(Bearer\s+)[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE)
 _REDACTED = "[REDACTED]"
 
 
-def _redact_value(key: str, value: Any) -> Any:
+def redact_value(key: str, value: Any) -> Any:
     if _SENSITIVE_KEYS.search(key):
         return _REDACTED
     if isinstance(value, str):
         return _BEARER.sub(r"\1" + _REDACTED, value)
     if isinstance(value, dict):
-        return {k: _redact_value(str(k), v) for k, v in value.items()}
+        return {k: redact_value(str(k), v) for k, v in value.items()}
     return value
 
 
@@ -33,7 +33,7 @@ def redact_processor(
     for key in list(event_dict.keys()):
         if key == "event":
             continue
-        event_dict[key] = _redact_value(key, event_dict[key])
+        event_dict[key] = redact_value(key, event_dict[key])
     return event_dict
 
 

@@ -1,0 +1,119 @@
+# promtool test rules deploy/monitoring/tests/xplowhatsapp.test.yml
+rule_files:
+  - ../rules/xplowhatsapp.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: API down for two minutes pages
+    interval: 1m
+    input_series:
+      - series: 'up{job="api"}'
+        values: "1 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ServiceDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: ServiceDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: api }
+            exp_annotations:
+              summary: "api is not answering"
+              description: "Prometheus has not reached api for 2 minutes. Check `docker compose ps` and its logs."
+
+  - name: Five percent of requests failing pages; a few errors do not
+    interval: 1m
+    input_series:
+      - series: 'xplo_http_requests_total{method="GET",route="/api/v1/leads",status="200"}'
+        values: "0+100x20"
+      - series: 'xplo_http_requests_total{method="GET",route="/api/v1/leads",status="500"}'
+        values: "0+10x20"
+      - series: 'xplo_http_requests_total{method="GET",route="/api/v1/me",status="500"}'
+        values: "0+0x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ApiErrorRateHigh
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "More than 5% of API requests are failing"
+              description: "9.091% of requests returned 5xx over 5 minutes. Sentry has the errors."
+
+  - name: WhatsApp send failures page only with enough volume
+    interval: 1m
+    input_series:
+      - series: 'xplo_task_runs_total{task="messages.send_outbox_job",result="done"}'
+        values: "0+2x30"
+      - series: 'xplo_task_runs_total{task="messages.send_outbox_job",result="failed"}'
+        values: "0+2x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: MessageSendsFailing
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "More than 20% of WhatsApp sends are failing"
+              description: "Check Meta's status page and accounts needing reconnection (Super Admin)."
+
+  - name: A quiet hour with one failed send does not page
+    interval: 1m
+    input_series:
+      - series: 'xplo_task_runs_total{task="messages.send_outbox_job",result="failed"}'
+        values: "0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: MessageSendsFailing
+        exp_alerts: []
+
+  - name: Queue backlog
+    interval: 1m
+    input_series:
+      - series: 'xplo_queue_depth{queue="messages"}'
+        values: "600x20"
+      - series: 'xplo_queue_depth{queue="default"}'
+        values: "3x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: QueueBacklog
+        exp_alerts:
+          - exp_labels: { severity: warning, queue: messages }
+            exp_annotations:
+              summary: "Queue messages has 600 waiting tasks"
+              description: "Workers are not keeping up. Check the worker's health and WORKER_CONCURRENCY."
+
+  - name: Backup older than 26 hours
+    interval: 1h
+    input_series:
+      # Last success at t=0 (epoch 0); evaluated 27 hours later.
+      - series: 'xplo_backup_last_success_timestamp_seconds'
+        values: "0x30"
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: BackupMissing
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: BackupMissing
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "No database backup in over 26 hours"
+              description: "Run `systemctl status xplo-backup.timer` and check the last backup log."
+
+  - name: Gemini failing triggers a provider alert
+    interval: 1m
+    input_series:
+      - series: 'xplo_ai_attempts_total{provider="gemini",result="ok"}'
+        values: "0+1x30"
+      - series: 'xplo_ai_attempts_total{provider="gemini",result="timeout"}'
+        values: "0+2x30"
+      - series: 'xplo_ai_attempts_total{provider="openai",result="ok"}'
+        values: "0+5x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: AiProviderFailing
+        exp_alerts:
+          - exp_labels: { severity: warning, provider: gemini }
+            exp_annotations:
+              summary: "gemini is failing for 66.67% of calls"
+              description: "Replies fall back to the next model or to a person. Check the provider's status and the platform key."

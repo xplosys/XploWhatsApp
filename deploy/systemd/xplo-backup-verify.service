@@ -1,0 +1,9 @@
+[Unit]
+Description=XploWhatsApp weekly restore check
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/xplowhatsapp
+ExecStart=/opt/xplowhatsapp/deploy/scripts/backup.sh verify

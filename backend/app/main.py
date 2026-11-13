@@ -9,11 +9,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.metrics import router as metrics_router
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.metrics import MetricsMiddleware
 from app.core.middleware import RequestContextMiddleware, UploadSizeLimitMiddleware
+from app.core.observability import init_sentry
 from app.core.redis import close_redis
 from app.db.session import dispose_engines
 
@@ -28,6 +31,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_json)
+    init_sentry(settings, "api")
     app = FastAPI(
         title="XploWhatsApp API",
         version="0.1.0",
@@ -53,8 +57,11 @@ def create_app() -> FastAPI:
         RequestContextMiddleware,
         hsts_max_age=settings.hsts_max_age_seconds if settings.is_production_like else None,
     )
+    # Outermost, so it times the whole request and sees the final status code.
+    app.add_middleware(MetricsMiddleware)
     register_exception_handlers(app)
     app.include_router(health_router)
+    app.include_router(metrics_router)
     app.include_router(api_router)
     return app
 
