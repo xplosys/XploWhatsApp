@@ -1,11 +1,15 @@
-# Gitleaks configuration: the default rules, plus an allowlist for the fake keys that
-# tests use on purpose (they are made up and never valid anywhere). Real code, config
-# and docs are scanned in full.
+# Gitleaks configuration: the default rules, plus a narrow allowlist. Real code, config
+# and docs are scanned in full. Either condition below allows a finding:
+# - made-up keys in test fixtures (never valid anywhere);
+# - a "secret" that is only an ALL_CAPS variable name: an empty KEY= line in
+#   .env.example, where the generic rule reads the next line's name as the value.
 title = "XploWhatsApp"
 
 [extend]
 useDefault = true
 
 [allowlist]
-description = "Made-up keys in test fixtures"
+description = "Test fixtures, and variable names read as values"
 paths = ['''^backend/tests/''']
+regexTarget = "secret"
+regexes = ['''^[A-Z][A-Z0-9_]+$''']
