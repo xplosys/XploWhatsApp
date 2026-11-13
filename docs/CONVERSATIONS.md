@@ -79,5 +79,6 @@ A lead is a sales opportunity with a contact: title, status (new, contacted, qua
 | `GET /knowledge/unanswered`, `PATCH /knowledge/unanswered/{id}` | knowledge:read, knowledge:manage |
 | `GET /leads`, `GET /leads/summary`, `POST /leads`, `GET`/`PATCH /leads/{id}`, `POST /leads/{id}/notes` | leads:manage |
 | `DELETE /leads/{id}` | conversations:assign |
+| `GET /analytics/overview`, `GET /analytics/setup` | analytics:read, tenant:read (see docs/ANALYTICS.md) |
 
 All tables are tenant-scoped with forced row-level security.

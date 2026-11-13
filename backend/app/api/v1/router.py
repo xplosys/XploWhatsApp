@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.modules.admin.router import router as admin_router
 from app.modules.ai.admin_router import router as ai_admin_router
 from app.modules.ai.router import router as ai_router
+from app.modules.analytics.router import router as analytics_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
 from app.modules.billing.router import router as billing_router
@@ -32,6 +33,7 @@ for r in (
     ai_admin_router,
     unanswered_router,
     knowledge_router,
+    analytics_router,
     webhooks_router,
 ):
     api_router.include_router(r)

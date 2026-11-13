@@ -2,13 +2,14 @@
 
 AI-powered WhatsApp customer engagement and automation platform by XploSys. Multi-tenant SaaS built on the official Meta WhatsApp Cloud API.
 
-**Status:** Phases 1 to 5 (foundation, WhatsApp, AI assistant, knowledge base, conversation management) complete. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+**Status:** Phases 1 to 6 (foundation, WhatsApp, AI assistant, knowledge base, conversation management, customer dashboard) complete. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): system design, diagrams, data model, security decisions
 - [docs/META_INTEGRATION.md](docs/META_INTEGRATION.md): Meta setup, approvals and onboarding sequence
 - [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md): AI providers, keys, model catalogue and how replies are checked
 - [docs/KNOWLEDGE.md](docs/KNOWLEDGE.md): knowledge base uploads, scanning, embeddings, retrieval and settings
 - [docs/CONVERSATIONS.md](docs/CONVERSATIONS.md): inbox, takeover and handover, assignment, notes, contacts and tags, AI summaries, unanswered questions and leads
+- [docs/ANALYTICS.md](docs/ANALYTICS.md): overview and analytics figures, how each is counted, and who sees them
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md): phased plan
 
 Stack: Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Celery, PostgreSQL 17 + pgvector, Redis, Next.js 16 + TypeScript + Tailwind CSS 4, Docker Compose.

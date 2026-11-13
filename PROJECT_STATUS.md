@@ -1,7 +1,7 @@
 # XploWhatsApp — project status
 
 **Last updated:** 2026-11-13
-**Current phase:** Phase 5 complete, awaiting approval to start Phase 6 (customer dashboard)
+**Current phase:** Phase 6 complete, awaiting approval to start Phase 7 (billing and subscriptions)
 
 ## Phase tracker
 
@@ -12,12 +12,39 @@
 | 2. Meta WhatsApp integration | Done (PR #2) | See Phase 2 report. Going live needs Meta App Review and Tech Provider approval |
 | 3. AI provider orchestration | Done (PR #3) | See Phase 3 report and docs/AI_PROVIDERS.md |
 | 4. RAG knowledge engine | Done (PR #4) | See Phase 4 report and docs/KNOWLEDGE.md |
-| 5. Conversation management | Done, awaiting review | See Phase 5 report and docs/CONVERSATIONS.md |
-| 6. Customer dashboard | Not started | |
+| 5. Conversation management | Done (PR #5) | See Phase 5 report and docs/CONVERSATIONS.md |
+| 6. Customer dashboard | Done, awaiting review | See Phase 6 report and docs/ANALYTICS.md |
 | 7. Billing and subscriptions | Not started | |
 | 8. Security hardening | Not started | |
 | 9. Monitoring and deployment | Not started | |
 | 10. Production testing and release | Not started | |
+
+## Phase 6 report
+
+### What is complete
+
+- **Analytics API:** `GET /analytics/overview?days=7|30|90` (supervisors and above) returns totals with the previous period, messages per day, busiest weekday and hour, handover reasons, first-reply times (median and 90th percentile, assistant vs team), time to a person after a handover, a per-person team table, leads created and won with value, message delivery by status with top errors and billable categories, open unanswered questions, and AI requests and estimated cost (only for roles that can configure AI or see billing). Days and hours are in the business's time zone. `GET /analytics/setup` (every member) gives setup progress.
+- **Overview page:** inbox tiles that open the matching inbox tab, the five newest conversations needing a person, a setup checklist that links each step only for people allowed to do it and disappears when done, the last-7-days figures for supervisors and above, and the plan card.
+- **Analytics page:** period switch, four headline tiles with change against the previous period, a daily messages line chart with a hover and keyboard readout, a weekday-by-hour heatmap, handover reasons, first-reply times, message delivery and WhatsApp billable counts, AI usage, and the team table. Every chart has a table view. Agents see a plain explanation instead.
+- **States:** loading, empty (no messages in the period, no handovers, nothing sent, no team replies) and error states on both pages; reloading a period keeps the previous figures dimmed instead of blanking the page.
+- **Design system:** chart colours added as tokens in light and dark mode, checked with a palette validator for colour-blind separation and contrast. The inbox accepts `?view=` links.
+- **Screens:** all 16 screens in the brief now exist on the shared design system: sign in and register, email verification, business setup at registration, overview, WhatsApp, AI assistant, AI providers (on the AI page), knowledge base, inbox, contacts, leads, analytics, plan (overview card; full billing screens are Phase 7), team, account, Super Admin.
+
+### Tests
+
+- Backend: 235 tests, all passing (4 new). They cover the period window in the business's time zone, every overview figure on a scripted day (AI reply, AI handover, takeover and reply, a won lead, a read and a failed message), previous-period comparison, permissions (agents refused, supervisors without AI cost), period validation, another business's data not being counted, and setup progress.
+- `ruff`, `mypy --strict`, `eslint`, `tsc` and `next build`: clean.
+- Browser walkthrough against the running stack (screenshots in the project files under `phase6/`): overview, analytics at 30, 7 and 90 days, chart hover, heatmap hover, table view, dark mode, the inbox opened from a tile link, a phone at 390 px with no sideways scrolling, and an agent's overview with no analytics access.
+
+### Not verified here
+
+- Query speed on large data. The queries use the existing time indexes; ADR-036 sets the point at which to add daily rollups.
+
+### Known limitations of Phase 6
+
+- No custom date range, export to CSV, or per-number filter on analytics yet.
+- WhatsApp charges are counted, not priced (no rate card is stored; Meta bills businesses directly).
+- Subscription management screens (change plan, invoices, payment) arrive with Phase 7; the overview shows the current plan.
 
 ## Phase 5 report
 

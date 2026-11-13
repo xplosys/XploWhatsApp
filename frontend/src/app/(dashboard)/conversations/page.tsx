@@ -101,9 +101,12 @@ export default function ConversationsPage() {
         () => setMembers([]),
       );
     }
-    // A link such as /conversations?c=<id> opens that conversation.
-    const wanted = new URLSearchParams(window.location.search).get("c");
+    // A link such as /conversations?c=<id> opens that conversation; ?view=needs_human opens a tab.
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get("c");
     if (wanted) void Promise.resolve().then(() => setSelectedId(wanted));
+    const view = INBOX_VIEWS.find((v) => v.value === params.get("view"))?.value;
+    if (view) void Promise.resolve().then(() => setFilters((f) => ({ ...f, view })));
   }, [can]);
 
   if (conversations === null && !error) return <PageLoader />;
