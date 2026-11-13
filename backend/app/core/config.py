@@ -146,6 +146,34 @@ class Settings(BaseSettings):
     ai_history_messages: int = 20
     ai_history_max_chars: int = 12000
 
+    # Object storage: the S3 API only (MinIO in development). The public endpoint is the
+    # one browsers can reach, used for short-lived download links.
+    s3_endpoint_url: str | None = None
+    s3_public_endpoint_url: str | None = None
+    s3_region: str = "us-east-1"
+    s3_access_key_id: SecretStr | None = None
+    s3_secret_access_key: SecretStr | None = None
+    s3_bucket: str = "xplowhatsapp-private"
+    s3_presign_seconds: int = 300
+
+    # Virus scanning with clamd over TCP. Required outside development.
+    clamav_host: str | None = None
+    clamav_port: int = 3310
+    clamav_timeout_seconds: float = 60.0
+
+    # Knowledge base. Plan limits (documents, storage) come from the subscription plan.
+    knowledge_max_file_mb: int = 20
+    knowledge_max_extracted_chars: int = 2_000_000
+    knowledge_max_chunks_per_document: int = 3000
+    knowledge_chunk_tokens: int = 600
+    knowledge_chunk_overlap_tokens: int = 80
+    knowledge_embedding_batch: int = 96
+    knowledge_url_timeout_seconds: float = 15.0
+    knowledge_url_max_mb: int = 5
+    knowledge_url_max_redirects: int = 3
+    # Only for local testing against a server on this machine. Never in production.
+    knowledge_url_allow_private: bool = False
+
     @field_validator(
         "cors_allowed_origins", "whatsapp_opt_out_keywords", "whatsapp_opt_in_keywords", mode="before"
     )
@@ -173,6 +201,10 @@ class Settings(BaseSettings):
                 raise ValueError(f"Missing required settings in {self.environment}: {', '.join(missing)}")
             if not self.cookie_secure:
                 raise ValueError("COOKIE_SECURE must be true outside development")
+            if not self.clamav_host:
+                raise ValueError("CLAMAV_HOST is required outside development: uploads must be scanned")
+            if self.knowledge_url_allow_private:
+                raise ValueError("KNOWLEDGE_URL_ALLOW_PRIVATE must be false outside development")
             if self.email_backend != EmailBackend.SMTP:
                 raise ValueError("EMAIL_BACKEND must be smtp outside development")
             if self.task_dispatch != TaskDispatch.CELERY:

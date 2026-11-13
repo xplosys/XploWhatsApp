@@ -48,3 +48,5 @@ async def dispatch(task: str, *ids: uuid.UUID | str, countdown: float = 0) -> No
 PROCESS_WEBHOOK_EVENT = "app.workers.tasks.messages.process_webhook_event"
 SEND_OUTBOX_JOB = "app.workers.tasks.messages.send_outbox_job"
 AI_AUTO_REPLY = "app.workers.tasks.messages.ai_auto_reply"
+KNOWLEDGE_PROCESS = "app.workers.tasks.knowledge.process_version"
+KNOWLEDGE_REINDEX = "app.workers.tasks.knowledge.reindex"

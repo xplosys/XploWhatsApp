@@ -12,8 +12,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
@@ -26,8 +27,9 @@ from app.core.redis import get_redis
 from app.db.session import app_transaction, run_after_commit
 from app.modules.ai import catalogue, orchestrator
 from app.modules.ai.assistant import AssistantConfig, active_config, get_assistant
+from app.modules.ai.catalogue import CallRecord
 from app.modules.ai.orchestrator import ChainStep, Outcome
-from app.modules.ai.prompt import trim_history
+from app.modules.ai.prompt import Passage, fit_passages, trim_history
 from app.modules.ai.providers.base import Turn
 from app.modules.billing.service import effective_plan
 from app.modules.conversations import outbound
@@ -39,6 +41,7 @@ from app.modules.conversations.models import (
     Message,
     SenderType,
 )
+from app.modules.knowledge import retrieval
 from app.modules.policy.engine import service_window_open
 from app.modules.tenants.models import Tenant
 from app.workers.dispatch import AI_AUTO_REPLY, dispatch
@@ -136,6 +139,8 @@ class Prepared:
     default_language: str
     number_id: uuid.UUID
     contact_id: uuid.UUID
+    retrieval: retrieval.RetrievalPlan | str = "not_configured"
+    extra_calls: list[CallRecord] = field(default_factory=list)
 
 
 def _hand_over(conversation: Conversation) -> None:
@@ -186,7 +191,31 @@ async def _prepare(
         default_language=tenant.default_language or "en",
         number_id=conversation.number_id,
         contact_id=conversation.contact_id,
+        retrieval=await retrieval.plan_for(session, tenant_id),
     )
+
+
+async def _retrieve(
+    tenant_id: uuid.UUID, conversation_id: uuid.UUID, prepared: Prepared
+) -> tuple[list[Passage], dict[str, object]]:
+    """Knowledge passages for the customer's latest messages. The query is embedded
+    with no transaction open; only the vector search touches the database."""
+    plan = prepared.retrieval
+    if not isinstance(plan, retrieval.RetrievalPlan):
+        return [], {"hits": 0, "status": plan}
+    vectors, call, error = await retrieval.embed_queries(
+        plan, retrieval.queries_from_turns(prepared.turns), purpose="retrieval"
+    )
+    if call is not None:
+        prepared.extra_calls.append(dataclasses.replace(call, conversation_id=conversation_id))
+    if vectors is None:
+        return [], {"hits": 0, "error": error}
+    async with app_transaction(tenant_id) as session:
+        passages = await retrieval.nearest_any(
+            session, tenant_id, plan.embedder.model_pk, vectors, top_k=plan.top_k, min_score=plan.min_score
+        )
+    passages = fit_passages(passages)
+    return passages, {"hits": len(passages)}
 
 
 async def _deliver(
@@ -197,6 +226,8 @@ async def _deliver(
     prepared: Prepared,
     outcome: Outcome,
 ) -> str:
+    for call in prepared.extra_calls:
+        await catalogue.record_call(session, tenant_id, call)
     for call in orchestrator.call_records(outcome, purpose="auto_reply", conversation_id=conversation_id):
         await catalogue.record_call(session, tenant_id, call)
     conversation = await session.get(Conversation, conversation_id, with_for_update=True)
@@ -245,12 +276,15 @@ async def reply(conversation_id: uuid.UUID, tenant_id: uuid.UUID, trigger_id: uu
             prepared = await _prepare(session, tenant_id, conversation_id, trigger_id)
         if isinstance(prepared, str):
             return prepared
+        knowledge, retrieval_info = await _retrieve(tenant_id, conversation_id, prepared)
         outcome = await orchestrator.run(
             prepared.steps,
             prepared.config,
             business_name=prepared.business_name,
             default_language=prepared.default_language,
             turns=prepared.turns,
+            knowledge=knowledge,
+            retrieval=retrieval_info,
         )
         async with app_transaction(tenant_id) as session:
             result = await _deliver(session, tenant_id, conversation_id, trigger_id, prepared, outcome)

@@ -57,9 +57,21 @@ class GenerateResult:
     raw_id: str | None = None
 
 
+@dataclass
+class EmbedResult:
+    vectors: list[list[float]]
+    usage: Usage
+    # True when the provider reported no token count and input_tokens is an estimate.
+    usage_estimated: bool = False
+
+
+EmbedTask = Literal["document", "query"]
+
+
 @dataclass(frozen=True)
 class ModelInfo:
     model_id: str
+    kind: str = "chat"  # chat | embedding
     display_name: str | None = None
     context_window: int | None = None
     max_output_tokens: int | None = None
@@ -122,6 +134,14 @@ class AIProvider(Protocol):
     async def generate(self, request: GenerateRequest) -> GenerateResult: ...
 
     async def list_models(self) -> list[ModelInfo]: ...
+
+
+class EmbeddingProvider(Protocol):
+    key: str
+
+    async def embed(
+        self, model: str, texts: list[str], *, task: EmbedTask, dimensions: int
+    ) -> EmbedResult: ...
 
 
 # ---- shared HTTP plumbing ------------------------------------------------------

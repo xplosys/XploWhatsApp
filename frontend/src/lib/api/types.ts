@@ -216,7 +216,13 @@ export interface ChatMessage {
   pricing_category: string | null;
   wa_timestamp: string | null;
   created_at: string;
-  ai_provenance: { provider: string | null; model: string | null; reason: string; out_of_scope: boolean } | null;
+  ai_provenance: {
+    provider: string | null;
+    model: string | null;
+    reason: string;
+    out_of_scope: boolean;
+    sources?: KnowledgeSource[];
+  } | null;
 }
 
 // ---- AI (Phase 3) ----
@@ -287,6 +293,18 @@ export interface PreviewResult {
   model: string | null;
   out_of_scope: boolean;
   attempts: { provider: string; model: string; outcome: string; detail: string | null }[];
+  sources: KnowledgeSource[];
+  retrieval: { hits: number; status?: string; error?: string } | null;
+}
+
+/** A knowledge passage an AI answer was given, as kept in its provenance. */
+export interface KnowledgeSource {
+  document_id: string;
+  chunk_id: string;
+  title: string;
+  score: number;
+  pages?: number[];
+  sheet?: string;
 }
 
 export interface AIUsage {
@@ -318,7 +336,77 @@ export interface AIPrice {
 }
 
 export interface AdminAIModel extends AIModel {
+  kind: "chat" | "embedding";
   active: boolean;
   last_seen_at: string | null;
   current_price: AIPrice | null;
+}
+
+// ---- knowledge base (Phase 4) ----
+
+export interface EmbeddingModel {
+  id: string;
+  provider: ProviderKey;
+  model_id: string;
+  display_name: string | null;
+}
+
+export interface KnowledgeSettings {
+  embedding_model: EmbeddingModel | null;
+  pending_embedding_model: EmbeddingModel | null;
+  reindex_error: string | null;
+  reindex_done: number;
+  reindex_total: number;
+  min_score: string;
+  top_k: number;
+  usage: { documents: number; max_documents: number; storage_bytes: number; max_storage_bytes: number };
+  storage_ready: boolean;
+  virus_scan: boolean;
+  max_file_mb: number;
+}
+
+export type VersionStatus = "queued" | "processing" | "ready" | "replaced" | "failed" | "rejected";
+
+export interface KnowledgeVersion {
+  version: number;
+  status: VersionStatus;
+  original_filename: string | null;
+  file_type: string | null;
+  size_bytes: number;
+  scan_result: string | null;
+  error_code: string | null;
+  error: string | null;
+  char_count: number;
+  chunk_count: number;
+  created_at: string;
+  processed_at: string | null;
+  downloadable: boolean;
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  source_type: "file" | "url" | "text";
+  source_url: string | null;
+  active_version: number | null;
+  latest: KnowledgeVersion | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeDocumentDetail extends KnowledgeDocument {
+  versions: KnowledgeVersion[];
+}
+
+export interface KnowledgeChunk {
+  ordinal: number;
+  heading: string | null;
+  content: string;
+  meta: { pages?: number[]; sheet?: string; rows?: string };
+}
+
+export interface KnowledgeSearch {
+  passages: { document_id: string; title: string; content: string; score: number; meta: KnowledgeChunk["meta"]; used: boolean }[];
+  min_score: number;
+  status: string;
 }

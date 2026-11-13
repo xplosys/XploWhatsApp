@@ -554,6 +554,17 @@ function PreviewCard({ draft }: { draft: AssistantConfig }) {
                 {a.detail ? ` (${a.detail})` : ""}
               </p>
             ))}
+          {last.sources.length > 0 ? (
+            <p>
+              From your knowledge base:{" "}
+              {last.sources
+                .map((src) => `${src.title}${src.pages?.length ? ` (p. ${src.pages.join(", ")})` : src.sheet ? ` (${src.sheet})` : ""}`)
+                .filter((v, i, all) => all.indexOf(v) === i)
+                .join("; ")}
+            </p>
+          ) : (
+            last.retrieval?.status !== "not_configured" && <p>No knowledge base passage matched this question.</p>
+          )}
         </div>
       )}
       {error && <p className="mb-2 text-sm text-danger">{error}</p>}

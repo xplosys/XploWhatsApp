@@ -184,7 +184,9 @@ function ModelRow({
     <>
       <tr>
         <td className="px-6 py-3">
-          <p className="font-medium">{m.display_name || m.model_id}</p>
+          <p className="font-medium">
+            {m.display_name || m.model_id} {m.kind === "embedding" && <Badge tone="brand">Embedding</Badge>}
+          </p>
           <p className="text-xs text-muted">
             {m.model_id}
             {m.last_seen_at ? ` · last seen ${formatDateTime(m.last_seen_at)}` : " · added by hand"}
@@ -304,6 +306,7 @@ function PricePanel({ model, onSaved }: { model: AdminAIModel; onSaved: () => vo
 function AddModelForm({ provider, onDone }: { provider: ProviderKey; onDone: () => void }) {
   const [modelId, setModelId] = useState("");
   const [name, setName] = useState("");
+  const [kind, setKind] = useState<"chat" | "embedding">("chat");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -314,7 +317,7 @@ function AddModelForm({ provider, onDone }: { provider: ProviderKey; onDone: () 
     try {
       await api("/admin/ai/models", {
         method: "POST",
-        body: { provider, model_id: modelId.trim(), display_name: name.trim() || null, active: false },
+        body: { provider, model_id: modelId.trim(), display_name: name.trim() || null, kind, active: false },
       });
       onDone();
     } catch (err) {
@@ -335,6 +338,15 @@ function AddModelForm({ provider, onDone }: { provider: ProviderKey; onDone: () 
           required
         />
         <TextField label="Display name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+        <SelectField
+          label="Used for"
+          value={kind}
+          onChange={(e) => setKind(e.target.value as "chat" | "embedding")}
+          options={[
+            { value: "chat", label: "Answering customers (chat)" },
+            { value: "embedding", label: "Knowledge search (embeddings, 1536 dimensions)" },
+          ]}
+        />
       </div>
       <p className="text-xs text-muted">New models start inactive. Add a price, then activate it.</p>
       <div className="flex items-center gap-3">

@@ -8,7 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.modules.ai.assistant import AssistantConfig
-from app.modules.ai.models import KeySource, ProviderKey
+from app.modules.ai.models import KeySource, ModelKind, ProviderKey
 
 
 class ProviderOut(BaseModel):
@@ -93,6 +93,8 @@ class PreviewOut(BaseModel):
     model: str | None
     out_of_scope: bool
     attempts: list[AttemptOut]
+    sources: list[dict[str, Any]] = []
+    retrieval: dict[str, Any] | None = None
 
 
 class UsageRow(BaseModel):
@@ -124,6 +126,7 @@ class AdminModelOut(BaseModel):
     id: uuid.UUID
     provider: str
     model_id: str
+    kind: str
     display_name: str | None
     context_window: int | None
     max_output_tokens: int | None
@@ -135,6 +138,7 @@ class AdminModelOut(BaseModel):
 class AdminModelCreate(BaseModel):
     provider: ProviderKey
     model_id: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9._:/-]+$")
+    kind: ModelKind = ModelKind.CHAT
     display_name: str | None = Field(default=None, max_length=200)
     context_window: int | None = Field(default=None, ge=1)
     max_output_tokens: int | None = Field(default=None, ge=1)
@@ -143,6 +147,7 @@ class AdminModelCreate(BaseModel):
 
 class AdminModelUpdate(BaseModel):
     active: bool | None = None
+    kind: ModelKind | None = None
     display_name: str | None = Field(default=None, max_length=200)
     context_window: int | None = Field(default=None, ge=1)
     max_output_tokens: int | None = Field(default=None, ge=1)

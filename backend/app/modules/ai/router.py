@@ -26,9 +26,11 @@ from app.modules.ai.models import (
     Assistant,
     AssistantVersion,
     KeySource,
+    ModelKind,
     ProviderKey,
     UsageRecord,
 )
+from app.modules.ai.prompt import Passage, fit_passages
 from app.modules.ai.providers.base import ProviderError, Turn
 from app.modules.ai.schemas import (
     AssistantOut,
@@ -46,6 +48,7 @@ from app.modules.ai.schemas import (
 )
 from app.modules.audit.service import record
 from app.modules.billing.service import effective_plan
+from app.modules.knowledge import retrieval
 from app.modules.rbac.permissions import Permission
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -233,7 +236,7 @@ async def _require_assistant(ctx: TenantContext) -> Assistant:
 async def _check_models(ctx: TenantContext, config: AssistantConfig) -> None:
     for choice in config.chain:
         model = await catalogue.find_model(ctx.session, choice.provider, choice.model)
-        if model is None or not model.active:
+        if model is None or not model.active or model.kind != ModelKind.CHAT:
             raise ValidationFailed(
                 f"{choice.model} is not an available {choice.provider} model.", code="model_unavailable"
             )
@@ -330,12 +333,25 @@ async def preview(body: PreviewIn, ctx: Configurer) -> PreviewOut:
     if body.messages[-1].role != "user":
         raise ValidationFailed("The last message must be from the customer.", code="last_turn_not_user")
     steps = await orchestrator.prepare_chain(ctx.session, ctx.tenant_id, config)
+    turns = [Turn(m.role, m.text) for m in body.messages]
+    plan = await retrieval.plan_for(ctx.session, ctx.tenant_id)
+    knowledge: list[Passage] = []
+    retrieval_info: dict[str, object] = {"hits": 0, "status": plan} if isinstance(plan, str) else {}
+    if isinstance(plan, retrieval.RetrievalPlan):
+        found = await retrieval.search(
+            ctx.session, ctx.tenant_id, plan, retrieval.queries_from_turns(turns), purpose="preview"
+        )
+        if found.call is not None:
+            await catalogue.record_call(ctx.session, ctx.tenant_id, found.call)
+        knowledge, retrieval_info = fit_passages(found.passages), found.summary
     outcome = await orchestrator.run(
         steps,
         config,
         business_name=ctx.tenant.name,
         default_language=ctx.tenant.default_language or "en",
-        turns=[Turn(m.role, m.text) for m in body.messages],
+        turns=turns,
+        knowledge=knowledge,
+        retrieval=retrieval_info,
     )
     for call in orchestrator.call_records(outcome, purpose="preview"):
         await catalogue.record_call(ctx.session, ctx.tenant_id, call)
@@ -350,6 +366,8 @@ async def preview(body: PreviewIn, ctx: Configurer) -> PreviewOut:
             AttemptOut(provider=a.provider, model=a.model, outcome=a.outcome, detail=a.detail)
             for a in outcome.attempts
         ],
+        sources=outcome.sources,
+        retrieval=outcome.retrieval,
     )
 
 

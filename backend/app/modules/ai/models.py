@@ -38,6 +38,11 @@ class ProviderKey(StrEnum):
     DEEPSEEK = "deepseek"
 
 
+class ModelKind(StrEnum):
+    CHAT = "chat"  # answers customers
+    EMBEDDING = "embedding"  # turns knowledge text into vectors for search
+
+
 class KeySource(StrEnum):
     TENANT = "tenant"  # the business's own API key, stored encrypted
     PLATFORM = "platform"  # XploSys's key from the environment, if the plan allows it
@@ -54,10 +59,14 @@ class AIModel(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("provider", "model_id"),
         CheckConstraint(f"provider IN {PROVIDERS_SQL}", name="provider_valid"),
+        CheckConstraint("kind IN ('chat', 'embedding')", name="kind_valid"),
     )
 
     provider: Mapped[str] = mapped_column(String(16), nullable=False)
     model_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=ModelKind.CHAT, server_default="chat"
+    )
     display_name: Mapped[str | None] = mapped_column(String(200))
     context_window: Mapped[int | None] = mapped_column(Integer)
     max_output_tokens: Mapped[int | None] = mapped_column(Integer)

@@ -5,9 +5,11 @@ import time
 import uuid
 
 import structlog
+from starlette.datastructures import Headers
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 _VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9\-]{8,64}$")
 
@@ -36,3 +38,34 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             duration_ms=round((time.perf_counter() - start) * 1000, 1),
         )
         return response
+
+
+class UploadSizeLimitMiddleware:
+    """Refuse multipart uploads that declare a body larger than allowed, before anything
+    is parsed or spooled to disk. Uploads without a Content-Length are refused too.
+    (The reverse proxy enforces the same limit in production.)"""
+
+    def __init__(self, app: ASGIApp, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            headers = Headers(scope=scope)
+            if headers.get("content-type", "").lower().startswith("multipart/"):
+                length = headers.get("content-length", "")
+                problem = None
+                if not length.isdigit():
+                    problem = (411, "length_required", "Uploads must declare their size.")
+                elif int(length) > self.max_bytes:
+                    mb = self.max_bytes // (1024 * 1024)
+                    problem = (413, "file_too_large", f"The upload is larger than {mb} MB.")
+                if problem:
+                    status, code, message = problem
+                    response = JSONResponse(
+                        {"error": {"code": code, "message": message, "details": None, "request_id": None}},
+                        status_code=status,
+                    )
+                    await response(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)

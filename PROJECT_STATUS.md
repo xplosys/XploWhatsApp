@@ -1,7 +1,7 @@
 # XploWhatsApp — project status
 
-**Last updated:** 2026-11-12
-**Current phase:** Phase 3 complete, awaiting approval to start Phase 4 (RAG knowledge engine)
+**Last updated:** 2026-11-13
+**Current phase:** Phase 4 complete, awaiting approval to start Phase 5 (conversation management)
 
 ## Phase tracker
 
@@ -10,14 +10,54 @@
 | 0. Architecture and planning | Done (approved 2026-11-12) | ARCHITECTURE.md, docs/META_INTEGRATION.md, docs/IMPLEMENTATION_PLAN.md |
 | 1. Foundation | Done (PR #1) | See Phase 1 report |
 | 2. Meta WhatsApp integration | Done (PR #2) | See Phase 2 report. Going live needs Meta App Review and Tech Provider approval |
-| 3. AI provider orchestration | Done, awaiting review | See Phase 3 report and docs/AI_PROVIDERS.md |
-| 4. RAG knowledge engine | Not started | |
+| 3. AI provider orchestration | Done (PR #3) | See Phase 3 report and docs/AI_PROVIDERS.md |
+| 4. RAG knowledge engine | Done, awaiting review | See Phase 4 report and docs/KNOWLEDGE.md |
 | 5. Conversation management | Not started | |
 | 6. Customer dashboard | Not started | |
 | 7. Billing and subscriptions | Not started | |
 | 8. Security hardening | Not started | |
 | 9. Monitoring and deployment | Not started | |
 | 10. Production testing and release | Not started | |
+
+## Phase 4 report
+
+### What is complete
+
+- **Data model (migration 0004):** `knowledge_settings` (embedding model, a pending model during a switch, match score, passages per answer), `knowledge_documents`, `knowledge_document_versions`, `knowledge_chunks` and `knowledge_chunk_embeddings` (`vector(1536)`, HNSW cosine). `ai_models.kind` (chat or embedding). Forced RLS on all five tables; definer functions for the sweeper return only IDs.
+- **Storage and scanning:** private S3-compatible bucket through the S3 API, presigned downloads forced to attachment, and ClamAV scanning of every file and fetched page before parsing (required outside development).
+- **Upload checks:** body size capped before reading, content must match the extension, zip-bomb limits, macros and legacy Office files refused, plan limits on documents and storage.
+- **Extraction:** PDF (per page), Word (heading paths and tables), Excel and CSV (each row as `Header: value` pairs), text, Markdown and web pages (navigation and scripts dropped). Clear messages for scanned or password-protected PDFs and oversized documents.
+- **Web pages:** fetched with SSRF protection (public addresses only, pinned connection, manual redirects, type and size caps); "Fetch again" makes a new version.
+- **Chunking and embeddings:** heading-aware chunks with overlap and page or sheet references; OpenAI and Gemini embeddings at 1536 dimensions, batched, retried, metered with cost.
+- **Versions:** every upload, edit or fetch is a new version; answers use the active version until the new one is ready; identical uploads are refused; old versions can be downloaded or deleted; failed versions can be retried.
+- **Re-indexing:** changing the embedding model re-embeds in batches beside the old vectors, then switches; answers keep working meanwhile; errors are shown with a retry.
+- **Retrieval in answers:** automatic replies and the preview embed the latest message and recent context, search the business's passages above its threshold, give them to the model as reference excerpts, count them as grounding, and store the sources in the message provenance.
+- **Frontend:** Knowledge base page (search settings and re-index progress, add a file, web page or note, document list with live status, versions with download, retry and delete, the passages the assistant reads, and a "Test a question" card with scores). Sources under AI replies in conversations and in the preview. Embedding models in the Super Admin catalogue.
+- **Docker Compose:** SeaweedFS (bucket created by the migrate step) and ClamAV (optional `scan` profile in development).
+
+### Tests
+
+- Backend: 209 tests, all passing (54 new). Integration tests run against real PostgreSQL with pgvector, Redis and SeaweedFS, a fake clamd and fake providers: every format to chunks, presigned download, refused file types, malware rejected, scanner outage and retry, quotas, upload size limit, versions and notes, deletion removing files, tenant privacy, web pages with redirects and every SSRF case, answers grounded by a document with sources, a price outside the passages handed over, retrieval failure, preview, search test, embedding failure and retry, wrong vector size, model switch with errors and retry, the sweeper, and duplicate jobs. Unit tests cover chunking, file detection, extraction and address checks.
+- `ruff`, `mypy --strict`, `eslint`, `tsc` and `next build`: clean. Migration up, down and up again ran clean, and `alembic check` finds no drift.
+- Browser walkthrough against the running stack with fake providers: choose the embedding model, upload a Word file and a spreadsheet, add a web page and a note, see a 12 MB file refused with a reason, view passages, test a question, preview an answer with its source, and see "Sources" under an automatic WhatsApp reply.
+
+### Fixed along the way
+
+- The app's `/api` proxy cut request bodies at 10 MB (a Next.js default), which would have broken larger uploads; the limit now follows `KNOWLEDGE_MAX_FILE_MB`.
+- Searching with only the last three customer messages joined let an earlier topic drown out a new question; the latest message is now searched on its own as well.
+
+### Not verified here
+
+- Real OpenAI and Gemini embedding calls (fakes built from the documented request and response shapes). Before launch, add a real key and run "Test a question".
+- The real ClamAV image in the full stack (the protocol is tested against a fake clamd; the image needs 3 to 4 GB of memory).
+- A production object store (Phase 9).
+
+### Known limitations of Phase 4
+
+- No OCR for scanned PDFs, and no images, `.doc`, `.xls` or `.pptx`.
+- Web pages are fetched one at a time when asked; there is no site crawl or scheduled refresh yet.
+- Embedding models must return 1536 dimensions.
+- Retrieval scores depend on the model; the default threshold of 0.30 should be checked with the search test once a real model is chosen.
 
 ## Phase 3 report
 

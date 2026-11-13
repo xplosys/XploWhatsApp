@@ -14,6 +14,8 @@ import httpx
 
 from app.core.config import get_settings
 from app.modules.ai.providers.base import (
+    EmbedResult,
+    EmbedTask,
     GenerateRequest,
     GenerateResult,
     ModelInfo,
@@ -75,6 +77,36 @@ class GeminiProvider:
                 raise
         return parse_response(data, request.model)
 
+    async def embed(self, model: str, texts: list[str], *, task: EmbedTask, dimensions: int) -> EmbedResult:
+        name = model.removeprefix("models/")
+        path_model = f"models/{name}"
+        config = {
+            "taskType": "RETRIEVAL_QUERY" if task == "query" else "RETRIEVAL_DOCUMENT",
+            "outputDimensionality": dimensions,
+        }
+        body = {
+            "requests": [
+                {"model": path_model, "content": {"parts": [{"text": t}]}, "embedContentConfig": config}
+                for t in texts
+            ]
+        }
+        async with self._client() as client:
+            try:
+                data = await send(
+                    client, "POST", f"/v1beta/models/{quote(name, safe='-._')}:batchEmbedContents", json=body
+                )
+            except ProviderBadRequest as exc:
+                if "api key" in str(exc).lower():
+                    raise ProviderAuthError(str(exc), status=exc.status) from exc
+                raise
+        vectors = [[float(x) for x in (e.get("values") or [])] for e in data.get("embeddings") or []]
+        if len(vectors) != len(texts):
+            raise ProviderBadRequest(f"Expected {len(texts)} embeddings, got {len(vectors)}.")
+        tokens = (data.get("usageMetadata") or {}).get("promptTokenCount")
+        if tokens is None:
+            return EmbedResult(vectors, Usage(input_tokens=sum(len(t) for t in texts) // 4), True)
+        return EmbedResult(vectors, Usage(input_tokens=int(tokens)))
+
     async def list_models(self) -> list[ModelInfo]:
         models: list[ModelInfo] = []
         page_token: str | None = None
@@ -86,11 +118,16 @@ class GeminiProvider:
                 data = await send(client, "GET", "/v1beta/models", params=params)
                 for m in data.get("models") or []:
                     methods = m.get("supportedGenerationMethods") or []
-                    if "generateContent" not in methods:
+                    if "generateContent" in methods:
+                        kind = "chat"
+                    elif "embedContent" in methods or "batchEmbedContents" in methods:
+                        kind = "embedding"
+                    else:
                         continue
                     models.append(
                         ModelInfo(
                             model_id=str(m.get("name", "")).removeprefix("models/"),
+                            kind=kind,
                             display_name=m.get("displayName"),
                             context_window=m.get("inputTokenLimit"),
                             max_output_tokens=m.get("outputTokenLimit"),

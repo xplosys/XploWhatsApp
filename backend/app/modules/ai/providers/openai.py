@@ -12,9 +12,12 @@ import httpx
 
 from app.core.config import get_settings
 from app.modules.ai.providers.base import (
+    EmbedResult,
+    EmbedTask,
     GenerateRequest,
     GenerateResult,
     ModelInfo,
+    ProviderBadRequest,
     ProviderContentBlocked,
     ProviderIncomplete,
     Usage,
@@ -56,10 +59,27 @@ class OpenAIProvider:
             data = await send(client, "POST", "/v1/responses", json=body)
         return parse_response(data, request.model)
 
+    async def embed(self, model: str, texts: list[str], *, task: EmbedTask, dimensions: int) -> EmbedResult:
+        # OpenAI embeddings have no query/document distinction; `task` is ignored.
+        body = {"model": model, "input": texts, "dimensions": dimensions, "encoding_format": "float"}
+        async with self._client() as client:
+            data = await send(client, "POST", "/v1/embeddings", json=body)
+        rows = sorted(data.get("data") or [], key=lambda r: int(r.get("index", 0)))
+        vectors = [[float(x) for x in r.get("embedding") or []] for r in rows]
+        if len(vectors) != len(texts):
+            raise ProviderBadRequest(f"Expected {len(texts)} embeddings, got {len(vectors)}.")
+        usage = Usage(input_tokens=int((data.get("usage") or {}).get("prompt_tokens") or 0))
+        return EmbedResult(vectors, usage)
+
     async def list_models(self) -> list[ModelInfo]:
         async with self._client() as client:
             data = await send(client, "GET", "/v1/models")
-        return [ModelInfo(model_id=str(m["id"])) for m in data.get("data") or [] if m.get("id")]
+        # The list carries no model type; embedding models are named as such.
+        return [
+            ModelInfo(model_id=str(m["id"]), kind="embedding" if "embedding" in str(m["id"]) else "chat")
+            for m in data.get("data") or []
+            if m.get("id")
+        ]
 
 
 def parse_response(data: dict[str, Any], model: str) -> GenerateResult:

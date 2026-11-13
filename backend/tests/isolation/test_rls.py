@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.db.base import Base
-from app.db.session import app_transaction
+from app.db.session import admin_transaction, app_transaction
 from tests.conftest import RegisterFn
 
 API = "/api/v1"
@@ -166,12 +166,37 @@ INSERTS: dict[str, Callable[[uuid.UUID, uuid.UUID, uuid.UUID], tuple[str, dict[s
         "VALUES (:id, :t, 'ai_reply', -1000, 'message', 'none', '{}', now())",
         {"id": uuid.uuid4(), "t": t},
     ),
+    "knowledge_settings": lambda t, u, p: (
+        "INSERT INTO knowledge_settings (id, tenant_id) VALUES (:id, :t)",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "knowledge_documents": lambda t, u, p: (
+        "INSERT INTO knowledge_documents (id, tenant_id, title, source_type, latest_version) "
+        "VALUES (:id, :t, 'Poisoned prices', 'text', 1)",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "knowledge_document_versions": lambda t, u, p: (
+        "INSERT INTO knowledge_document_versions (id, tenant_id, document_id, version, status, size_bytes, "
+        "char_count, chunk_count, attempts, created_at, updated_at) "
+        "VALUES (:id, :t, :id, 1, 'ready', 0, 0, 0, 0, now(), now())",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "knowledge_chunks": lambda t, u, p: (
+        "INSERT INTO knowledge_chunks (id, tenant_id, document_id, version_id, ordinal, content, "
+        "token_estimate, metadata) VALUES (:id, :t, :id, :id, 0, 'Everything is free', 4, '{}')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "knowledge_chunk_embeddings": lambda t, u, p: (
+        "INSERT INTO knowledge_chunk_embeddings (id, tenant_id, chunk_id, model_pk, embedding) "
+        "VALUES (:id, :t, :id, :id, :v)",
+        {"id": uuid.uuid4(), "t": t, "v": "[" + ",".join(["0.1"] * 1536) + "]"},
+    ),
 }
 
 
 async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
     """One row in every WhatsApp table for the given tenant, written as that tenant."""
-    acc, num, contact, conv, bot = (uuid.uuid4() for _ in range(5))
+    acc, num, contact, conv, bot, doc, ver, chunk = (uuid.uuid4() for _ in range(8))
     statements = [
         (
             "INSERT INTO whatsapp_accounts (id, tenant_id, waba_id, status, health) "
@@ -239,7 +264,41 @@ async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
             "VALUES (gen_random_uuid(), :t, 'ai_call', 1, 'call', 'none', '{}', now())",
             {},
         ),
+        (
+            "INSERT INTO knowledge_settings (id, tenant_id, embedding_model_pk) VALUES (gen_random_uuid(), :t, :model)",
+            {},
+        ),
+        (
+            "INSERT INTO knowledge_documents (id, tenant_id, title, source_type, active_version, latest_version) "
+            "VALUES (:doc, :t, 'Price list', 'text', 1, 1)",
+            {},
+        ),
+        (
+            "INSERT INTO knowledge_document_versions (id, tenant_id, document_id, version, status, size_bytes, "
+            "char_count, chunk_count, attempts, created_at, updated_at) "
+            "VALUES (:ver, :t, :doc, 1, 'ready', 10, 10, 1, 1, now(), now())",
+            {},
+        ),
+        (
+            "INSERT INTO knowledge_chunks (id, tenant_id, document_id, version_id, ordinal, content, "
+            "token_estimate, metadata) VALUES (:chunk, :t, :doc, :ver, 0, 'Secret price list', 4, '{}')",
+            {},
+        ),
+        (
+            "INSERT INTO knowledge_chunk_embeddings (id, tenant_id, chunk_id, model_pk, embedding) "
+            "VALUES (gen_random_uuid(), :t, :chunk, :model, :v)",
+            {"v": "[" + ",".join(["0.1"] * 1536) + "]"},
+        ),
     ]
+    async with admin_transaction() as s:
+        model = uuid.uuid4()
+        await s.execute(
+            text(
+                "INSERT INTO ai_models (id, provider, model_id, kind, capabilities, active) "
+                "VALUES (:m, 'openai', :name, 'embedding', '{}', true)"
+            ),
+            {"m": model, "name": f"embed-{model.hex[:6]}"},
+        )
     async with app_transaction(tenant_id) as s:
         for sql, extra in statements:
             await s.execute(
@@ -251,6 +310,10 @@ async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
                     "contact": contact,
                     "conv": conv,
                     "bot": bot,
+                    "doc": doc,
+                    "ver": ver,
+                    "chunk": chunk,
+                    "model": model,
                     **extra,
                 },
             )
