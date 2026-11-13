@@ -165,7 +165,7 @@ services:
     networks: [internal]
 
   # S3-compatible private object storage for knowledge files (development).
-  # Production points S3_* at a managed bucket instead (Phase 9).
+  # Production uses a managed bucket or the storage profile (docs/DEPLOYMENT_UBUNTU.md, section 4).
   seaweedfs:
     image: chrislusf/seaweedfs:4.50
     restart: unless-stopped

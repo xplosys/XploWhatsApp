@@ -6,7 +6,8 @@ XploWhatsApp. After that, every merge to `main` deploys itself.
 The whole stack runs from `docker-compose.prod.yml` on that one server:
 
 - Nginx (TLS) and certbot;
-- the web app, the API, the worker and the scheduler;
+- the web app, the API, two workers (one for webhooks, sends and documents, one for AI
+  replies) and the scheduler;
 - Postgres with pgvector, Redis and ClamAV;
 - optionally SeaweedFS for files;
 - Prometheus, Alertmanager and Grafana with their exporters.
@@ -314,7 +315,7 @@ deploy/scripts/backup.sh restore backups/db/xplowhatsapp-<stamp>.dump.gpg
 
 You must type `RESTORE` to confirm. The restore then:
 
-1. stops Nginx, the web app, the API, the worker and the scheduler;
+1. stops Nginx, the web app, the API, the workers and the scheduler;
 2. decrypts the dump and replaces the database in one transaction;
 3. runs migrations, in case the dump predates the running release;
 4. starts everything again.
@@ -399,6 +400,11 @@ same project or a second one (platform JavaScript) for the browser.
 | Database shell | `docker compose -f docker-compose.prod.yml exec postgres psql -U postgres xplowhatsapp` |
 | Rotate the encryption key | see docs/SECURITY.md, "Key rotation" |
 | OS updates | unattended-upgrades applies security updates. Reboot when `/var/run/reboot-required` exists; the stack restarts itself. |
+
+**Capacity.** AI replies run on `worker-ai`. It answers about `AI_WORKER_CONCURRENCY`
+(default 12) divided by the model's reply time each second: 12 processes and a 2-second
+model give about 6 replies a second. Each process uses about 150 MB of RAM. Measured
+figures and the load test are in docs/LAUNCH_CHECKLIST.md section 7.
 
 Logs rotate at 20 MB, keeping five files per container. Prometheus keeps
 `PROMETHEUS_RETENTION` (30 days by default) of metrics.

@@ -1,7 +1,7 @@
 # XploWhatsApp — project status
 
 **Last updated:** 2026-11-13
-**Current phase:** Phase 9 complete, awaiting approval to start Phase 10 (production testing and release)
+**Current phase:** Phase 10 complete (production testing and release). All ten phases are built; launch waits on review and Meta App Review
 
 ## Phase tracker
 
@@ -16,8 +16,61 @@
 | 6. Customer dashboard | Done (PR #6) | See Phase 6 report and docs/ANALYTICS.md |
 | 7. Billing and subscriptions | Done, awaiting review (PR #7) | See Phase 7 report and docs/BILLING.md |
 | 8. Security hardening | Done, awaiting review (PR #8) | See Phase 8 report and docs/SECURITY.md |
-| 9. Monitoring and deployment | Done, awaiting review | See Phase 9 report and docs/DEPLOYMENT_UBUNTU.md |
-| 10. Production testing and release | Not started | |
+| 9. Monitoring and deployment | Done, awaiting review (PR #9) | See Phase 9 report and docs/DEPLOYMENT_UBUNTU.md |
+| 10. Production testing and release | Done, awaiting review (PR #10) | See Phase 10 report, docs/LAUNCH_CHECKLIST.md and e2e/README.md |
+
+## Phase 10 report
+
+### What is complete
+
+- **End-to-end tests (ADR 061):** Playwright drives the real product in Chromium against the real API, workers, web app, Postgres, Redis and object storage. Only Meta's Graph API and the AI providers are replaced, by `e2e/fakes/server.py`, which serves the backend's own test fakes over HTTP and sends customer messages as signed Meta webhooks. Facebook's SDK is stubbed in the page. Two journeys:
+  - **register → connect WhatsApp → Gemini → upload a PDF → customer message → AI reply → usage → dashboard.** It checks the AI call carried the PDF's passage, the reply shows its source, the reply left through the WhatsApp API to the customer's number, usage lists the model, and the overview counts one customer message handled by the assistant alone;
+  - **handover:** the assistant hands a complaint to the team, the owner replies from the inbox (sent through the WhatsApp API) and hands it back, and the assistant answers the next message.
+- **E2E in CI:** a new `e2e` job builds the stack with `e2e/docker-compose.e2e.yml`, creates the Super Admin with the CLI, runs both journeys, and on failure prints the page snapshots and service logs and uploads screenshots and traces.
+- **Load tests (ADR 063):** a k6 script (`e2e/load/whatsapp.js`) sends new customers' messages at a set rate while the dashboards poll the inbox counts, conversation list, overview and current user. It fails the run if a webhook is answered slower than 500 ms at p95 (1 s at p99), a dashboard read is slower than 800 ms at p95, any customer goes unanswered, or reply p95 exceeds the target. The fake service measures each reply from the customer's message to the WhatsApp API call. A Playwright step prepares the business through the UI.
+- **Fix found by the load test (ADR 062):** AI replies shared the `messages` queue with webhooks and sends. With a model that takes 2 seconds, four worker processes spent their time waiting on the provider: at 3 messages a second, replies took 35 s at the median and 58 s at p95. AI replies and summaries now have their own `ai` queue and `worker-ai` service (`AI_WORKER_CONCURRENCY`, default 12), with its own health check and metrics target. The same load now gets replies in 3.1 s (p50) and 3.2 s (p95). A test checks the routing and that both compose files consume exactly the queues the metrics know.
+- **docs/LAUNCH_CHECKLIST.md:** the go-live list in order:
+  - release candidate and server checks;
+  - platform set-up (Super Admin, models and prices, plans, live payment keys);
+  - Meta set-up;
+  - **App Review submission pack:** the two permissions to request and why (`business_management` is not needed), suggested answers, a timed screencast script, reviewer instructions and data-handling answers;
+  - legal and privacy items for XploSys (privacy policy, terms, data deletion instructions with factual text, DPA, DPDP grievance officer);
+  - measured capacity and how to size workers;
+  - launch day smoke test, rollback and the first week.
+- **e2e/README.md:** how to run the E2E and load tests with Docker or against your own processes, and every setting.
+- **Fixed along the way:**
+  - the restore command stopped the worker but would have left the new AI worker writing to the database during a restore;
+  - the README's no-Docker worker command would not have run AI replies.
+
+### Tests
+
+- Backend: 316 tests, all passing (1 new: AI tasks go to their own queue, and the compose files consume exactly the known queues).
+- E2E: both journeys pass locally (about 26 s together) and in CI against the containers (36 s). The first CI run failed twice: the usage check matched a hidden option in the model picker (fixed by looking in the usage table), and the handover test never saw the "Turn on automatic replies" button. That second failure has not recurred in CI or in local runs, and its cause was not found from the logs; CI now prints the page snapshot of any failed test, so a repeat will show what the page held.
+- Load, on a 4 vCPU, 16 GB sandbox running everything, with dashboards polled at 10 requests a second. Every customer was answered in every run:
+
+  | Messages a second | AI latency | Reply p50 / p95 | Webhook p95 | Dashboard p95 |
+  |---|---|---|---|---|
+  | 10 | instant | 1.15 s / 1.19 s | 27 ms | under 100 ms |
+  | 20 | instant | 7.7 s / 11.3 s (CPU full) | 50 ms | under 800 ms |
+  | 3 | 2 s, before the queue split | 35 s / 58 s | 25 ms | under 100 ms |
+  | 5 | 2 s, after the split | 3.1 s / 3.2 s | 26 ms | 76 ms |
+  | 8 | 2 s, after the split | 20 s / 36 s (AI workers full) | 23 ms | 92 ms |
+
+  So one such server takes about 10 messages a second of CPU, and AI replies a second are about `AI_WORKER_CONCURRENCY` divided by the model's reply time.
+- `ruff`, `mypy --strict`, `eslint`, `tsc` (frontend and e2e) and `shellcheck`: clean.
+
+### Not verified here
+
+- Real Meta and real AI providers: E2E uses fakes, by design. The screencast for App Review (launch checklist section 5) is the end-to-end run against the real Meta test number.
+- Load on the production server: the figures above come from the sandbox. Run the load test on the real server before launch, with `E2E_AI_LATENCY_MS` set to the chosen model's latency.
+- App Review itself, business verification and Tech Provider onboarding: XploSys's steps with Meta.
+
+### Known limitations of Phase 10
+
+- Knowledge ingestion still shares the core worker with webhooks and sends, so a large batch of uploads can slow replies leaving. It could get its own queue the same way as AI if that shows up.
+- The first requests after a restart are slower while processes warm up (one run right after an API restart saw a dashboard p95 of 5.5 s; the rerun was under 100 ms).
+- The load test covers new conversations with text messages; media messages, template sends and billing webhooks are not in it.
+- Privacy policy, terms and the data deletion page are XploSys's to publish; the checklist gives the content they must cover.
 
 ## Phase 9 report
 
