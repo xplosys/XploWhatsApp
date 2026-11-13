@@ -10,7 +10,9 @@ import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { PageLoader } from "@/components/ui/Spinner";
 import { api, errorMessage } from "@/lib/api/client";
+import type { BillingSubscription } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { formatDate } from "@/lib/locale";
 
 const NAV = [
   { href: "/dashboard", label: "Overview" },
@@ -22,6 +24,7 @@ const NAV = [
   { href: "/ai", label: "AI assistant", permission: "ai:configure" },
   { href: "/knowledge", label: "Knowledge base", permission: "knowledge:read" },
   { href: "/team", label: "Team", permission: "members:read" },
+  { href: "/billing", label: "Billing", permission: "billing:read" },
   { href: "/settings", label: "Business settings", permission: "tenant:read" },
   { href: "/account", label: "Account & security" },
 ];
@@ -57,6 +60,43 @@ function VerifyBanner() {
   );
 }
 
+/** Tells owners and admins when the plan is about to stop, or has. */
+function BillingBanner({ tenantId, pathname }: { tenantId: string; pathname: string }) {
+  const [sub, setSub] = useState<BillingSubscription | null>(null);
+  const [trialDays, setTrialDays] = useState<number | null>(null);
+  useEffect(() => {
+    api<BillingSubscription>("/billing/subscription")
+      .then((s) => {
+        setSub(s);
+        setTrialDays(s.trial_ends_at ? Math.ceil((new Date(s.trial_ends_at).getTime() - Date.now()) / 86_400_000) : null);
+      })
+      .catch(() => setSub(null));
+  }, [tenantId]);
+  if (!sub || pathname.startsWith("/billing")) return null;
+  let text: string | null = null;
+  let tone: "warning" | "error" = "warning";
+  if (!sub.in_force) {
+    text = "Your plan has ended, so the AI assistant has stopped replying. Choose a plan to carry on.";
+    tone = "error";
+  } else if (sub.status === "past_due") {
+    text = `Your latest payment didn't go through. Update it by ${formatDate(sub.grace_ends_at)} to keep your plan.`;
+  } else if (sub.status === "trialing" && trialDays !== null) {
+    const days = Math.max(1, trialDays);
+    if (days <= 3) text = `Your free trial ends in ${days} day${days === 1 ? "" : "s"}. Choose a plan to keep the AI assistant answering.`;
+  }
+  if (!text) return null;
+  return (
+    <Alert tone={tone}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span>{text}</span>
+        <Link href="/billing" className="font-semibold underline">
+          Go to billing
+        </Link>
+      </div>
+    </Alert>
+  );
+}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { status, me, can, logout, switchTenant } = useAuth();
   const router = useRouter();
@@ -77,7 +117,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-screen md:flex">
-      <aside className="border-b border-line bg-surface md:min-h-screen md:w-64 md:border-b-0 md:border-r">
+      <aside className="print:hidden border-b border-line bg-surface md:min-h-screen md:w-64 md:border-b-0 md:border-r">
         <div className="flex items-center justify-between px-5 py-4">
           <Logo />
           <span className="flex items-center gap-2">
@@ -129,9 +169,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 px-4 py-8 md:px-10">
+      <main className="min-w-0 flex-1 px-4 py-8 md:px-10 print:p-0">
         <div className="mx-auto max-w-5xl space-y-6">
-          {!me.user.email_verified && <VerifyBanner />}
+          <div className="space-y-6 print:hidden">
+            {!me.user.email_verified && <VerifyBanner />}
+            {me.active_tenant_id && can("billing:read") && <BillingBanner tenantId={me.active_tenant_id} pathname={pathname} />}
+          </div>
           {!me.active_tenant_id && !me.user.is_super_admin && (
             <Alert tone="info">You are not a member of any business yet. Ask an owner to invite you.</Alert>
           )}

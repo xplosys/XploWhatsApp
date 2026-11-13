@@ -28,9 +28,18 @@ APPEND_ONLY = {
     "usage_records",
     "bot_configuration_versions",
     "lead_activities",
+    "billing_invoices",
+    "billing_transactions",
+    "billing_events",
 }
 # The app role has no UPDATE at all on these.
-NO_UPDATE = {"audit_logs", "usage_records", "bot_configuration_versions", "lead_activities"}
+NO_UPDATE = {
+    "audit_logs",
+    "usage_records",
+    "bot_configuration_versions",
+    "lead_activities",
+    "billing_invoices",
+}
 
 
 def _tenant_tables() -> dict[str, str]:
@@ -220,6 +229,31 @@ INSERTS: dict[str, Callable[[uuid.UUID, uuid.UUID, uuid.UUID], tuple[str, dict[s
         "INSERT INTO lead_activities (id, tenant_id, lead_id, type, data) VALUES (:id, :t, :id, 'note', '{}')",
         {"id": uuid.uuid4(), "t": t},
     ),
+    "billing_checkouts": lambda t, u, p: (
+        "INSERT INTO billing_checkouts (id, tenant_id, price_id, extra_seats, gateway, gateway_ref, status) "
+        "VALUES (:id, :t, :id, 0, 'stripe', :ref, 'open')",
+        {"id": uuid.uuid4(), "t": t, "ref": f"cs_{uuid.uuid4().hex}"},
+    ),
+    "billing_profiles": lambda t, u, p: (
+        "INSERT INTO billing_profiles (id, tenant_id, legal_name, country) VALUES (:id, :t, 'Evil', 'IN')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "billing_invoices": lambda t, u, p: (
+        "INSERT INTO billing_invoices (id, tenant_id, number, currency, subtotal, tax_total, total, line_items, "
+        "taxes, seller, buyer, gateway, gateway_payment_id, issued_at) VALUES (:id, :t, :n, 'INR', 1, 0, 1, "
+        "'[]', '[]', '{}', '{}', 'razorpay', :n, now())",
+        {"id": uuid.uuid4(), "t": t, "n": f"F/{uuid.uuid4().hex[:8]}"},
+    ),
+    "billing_transactions": lambda t, u, p: (
+        "INSERT INTO billing_transactions (id, tenant_id, gateway, gateway_payment_id, amount, currency, status, "
+        "occurred_at) VALUES (:id, :t, 'razorpay', :ref, 1, 'INR', 'succeeded', now())",
+        {"id": uuid.uuid4(), "t": t, "ref": f"pay_{uuid.uuid4().hex}"},
+    ),
+    "billing_events": lambda t, u, p: (
+        "INSERT INTO billing_events (id, tenant_id, gateway, event_id, type, payload, status, attempts) "
+        "VALUES (:id, :t, 'stripe', :ref, 'invoice.paid', '{}', 'pending', 0)",
+        {"id": uuid.uuid4(), "t": t, "ref": f"evt_{uuid.uuid4().hex}"},
+    ),
 }
 
 
@@ -358,6 +392,45 @@ async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
             ),
             {"m": model, "name": f"embed-{model.hex[:6]}"},
         )
+    price = uuid.uuid4()
+    async with admin_transaction() as s:
+        await s.execute(
+            text(
+                "INSERT INTO plan_prices (id, plan_id, currency, interval, amount, tax_rate, gateway) "
+                "SELECT :p, id, 'INR', 'month', 100, 18, 'razorpay' FROM subscription_plans LIMIT 1"
+            ),
+            {"p": price},
+        )
+    statements += [
+        (
+            "INSERT INTO billing_profiles (id, tenant_id, legal_name, country) "
+            "VALUES (gen_random_uuid(), :t, 'Two Ltd', 'IN')",
+            {},
+        ),
+        (
+            "INSERT INTO billing_checkouts (id, tenant_id, price_id, extra_seats, gateway, gateway_ref, status) "
+            "VALUES (gen_random_uuid(), :t, :price, 0, 'razorpay', 'sub_seed', 'open')",
+            {"price": price},
+        ),
+        (
+            "INSERT INTO billing_invoices (id, tenant_id, number, currency, subtotal, tax_total, total, "
+            "line_items, taxes, seller, buyer, gateway, gateway_payment_id, issued_at) VALUES "
+            "(gen_random_uuid(), :t, 'XW/SEED/1', 'INR', 100, 18, 118, '[]', '[]', '{}', '{}', 'razorpay', "
+            "'pay_seed', now())",
+            {},
+        ),
+        (
+            "INSERT INTO billing_transactions (id, tenant_id, gateway, gateway_payment_id, amount, currency, "
+            "status, occurred_at) VALUES (gen_random_uuid(), :t, 'razorpay', 'pay_seed', 118, 'INR', "
+            "'succeeded', now())",
+            {},
+        ),
+        (
+            "INSERT INTO billing_events (id, tenant_id, gateway, event_id, type, payload, status, attempts) "
+            "VALUES (gen_random_uuid(), :t, 'razorpay', 'evt_seed', 'subscription.charged', '{}', 'processed', 1)",
+            {},
+        ),
+    ]
     async with app_transaction(tenant_id) as s:
         for sql, extra in statements:
             await s.execute(
@@ -517,3 +590,34 @@ async def test_app_role_cannot_rewrite_metering_versions_or_catalogue(two_tenant
     with pytest.raises(DBAPIError, match="permission denied"):
         async with app_transaction(tenant_b) as s:
             await s.execute(text(f"UPDATE {table} SET id = id"))
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "UPDATE billing_invoices SET total = 0",
+        "DELETE FROM billing_invoices",
+        "DELETE FROM billing_transactions",
+        "DELETE FROM billing_events",
+        "INSERT INTO plan_prices (id, plan_id, currency, interval, amount, tax_rate, gateway) "
+        "SELECT gen_random_uuid(), id, 'INR', 'month', 1, 0, 'razorpay' FROM subscription_plans LIMIT 1",
+        "UPDATE plan_prices SET amount = 1",
+        "UPDATE invoice_sequences SET last_number = 0",
+    ],
+)
+async def test_invoices_and_payments_cannot_be_rewritten(two_tenants, sql: str) -> None:  # type: ignore[no-untyped-def]
+    _, tenant_b, _, _ = two_tenants
+    with pytest.raises(DBAPIError, match="permission denied"):
+        async with app_transaction(tenant_b) as s:
+            await s.execute(text(sql))
+
+
+async def test_invoice_numbers_come_only_from_the_definer_function(two_tenants) -> None:  # type: ignore[no-untyped-def]
+    _, tenant_b, _, _ = two_tenants
+    async with app_transaction(tenant_b) as s:
+        first = await s.scalar(text("SELECT app_next_invoice_number('2031-32')"))
+        second = await s.scalar(text("SELECT app_next_invoice_number('2031-32')"))
+        assert (first, second) == (1, 2)
+    with pytest.raises(DBAPIError):
+        async with app_transaction(tenant_b) as s:
+            await s.execute(text("SELECT app_next_invoice_number('bad; drop')"))

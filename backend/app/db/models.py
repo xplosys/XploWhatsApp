@@ -10,7 +10,17 @@ from app.modules.ai.models import (
 )
 from app.modules.audit.models import AuditLog
 from app.modules.auth.models import RefreshToken, User, UserActionToken
-from app.modules.billing.models import Subscription, SubscriptionPlan
+from app.modules.billing.models import (
+    BillingEvent,
+    BillingProfile,
+    Checkout,
+    Invoice,
+    InvoiceSequence,
+    PlanPrice,
+    Subscription,
+    SubscriptionPlan,
+    Transaction,
+)
 from app.modules.conversations.models import (
     Contact,
     Conversation,
@@ -39,11 +49,16 @@ __all__ = [
     "Assistant",
     "AssistantVersion",
     "AuditLog",
+    "BillingEvent",
+    "BillingProfile",
+    "Checkout",
     "Contact",
     "Conversation",
     "ConversationNote",
     "ConversationSummary",
     "HandoverSession",
+    "Invoice",
+    "InvoiceSequence",
     "KnowledgeChunk",
     "KnowledgeDocument",
     "KnowledgeDocumentVersion",
@@ -54,12 +69,14 @@ __all__ = [
     "Message",
     "MessageTemplate",
     "OutboxJob",
+    "PlanPrice",
     "RefreshToken",
     "Subscription",
     "SubscriptionPlan",
     "Tenant",
     "TenantInvitation",
     "TenantMembership",
+    "Transaction",
     "UnansweredQuestion",
     "UsageRecord",
     "User",

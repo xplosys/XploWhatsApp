@@ -1,7 +1,7 @@
 # XploWhatsApp — project status
 
 **Last updated:** 2026-11-13
-**Current phase:** Phase 6 complete, awaiting approval to start Phase 7 (billing and subscriptions)
+**Current phase:** Phase 7 complete, awaiting approval to start Phase 8 (security hardening)
 
 ## Phase tracker
 
@@ -13,11 +13,42 @@
 | 3. AI provider orchestration | Done (PR #3) | See Phase 3 report and docs/AI_PROVIDERS.md |
 | 4. RAG knowledge engine | Done (PR #4) | See Phase 4 report and docs/KNOWLEDGE.md |
 | 5. Conversation management | Done (PR #5) | See Phase 5 report and docs/CONVERSATIONS.md |
-| 6. Customer dashboard | Done, awaiting review | See Phase 6 report and docs/ANALYTICS.md |
-| 7. Billing and subscriptions | Not started | |
+| 6. Customer dashboard | Done (PR #6) | See Phase 6 report and docs/ANALYTICS.md |
+| 7. Billing and subscriptions | Done, awaiting review | See Phase 7 report and docs/BILLING.md |
 | 8. Security hardening | Not started | |
 | 9. Monitoring and deployment | Not started | |
 | 10. Production testing and release | Not started | |
+
+## Phase 7 report
+
+### What is complete
+
+- **Data model (migration 0006):** `plan_prices` (catalogue, read-only for the app role), `billing_checkouts`, `billing_profiles`, `billing_invoices` (insert only for the app role), `billing_transactions` and `billing_events` (no delete), `invoice_sequences` (written only by a definer function). Subscriptions gain price, customer, pending downgrade, grace, cancellation and end dates. Forced RLS on the five new tenant tables; `billing_events` allows rows with no business so unroutable webhooks are kept.
+- **Gateways:** Razorpay (INR) and Stripe (USD, GBP, EUR) behind `PaymentGateway`, as httpx clients on the documented REST APIs: price creation, checkout, plan changes, seats, cancel and resume, and signature checks for webhooks and Razorpay Checkout.
+- **Subscriptions:** trial at registration, checkout that checks billing details and that the plan fits current usage, activation from the checkout callback or the webhook (whichever is first), upgrades now with proration, downgrades at period end (undoable), extra seats, cancel at period end, resume on Stripe, failed payments with a 7-day grace period, and access that ends by date even before the sweeper runs.
+- **Webhooks:** stored once, acknowledged, applied by the worker; out-of-order Stripe events are retried; unknown events are kept as ignored.
+- **Tax invoices:** consecutive numbers per Indian financial year, GST split into CGST and SGST or IGST by the buyer's state, GSTIN validation with the check digit, export note with LUT for non-INR invoices, seller and buyer snapshots, printable invoice page.
+- **Emails:** trial ending (3 days before), trial ended, payment failed; to owners, admins and the billing email.
+- **Super Admin:** create and edit plans (limits, features, order, on sale or hidden, on or off), add prices (created on the gateway at once, tax rate frozen, old price retired), retire prices, subscriber counts.
+- **Dashboard:** Billing page with plan status, usage meters, plan picker with monthly and yearly, Razorpay Checkout or Stripe redirect, change plan, undo a downgrade, seats, cancel and resume, billing details with GST state list, invoices and payments. A banner on every page when a trial is about to end, a payment failed or the plan has ended. Owners manage; admins read.
+
+### Tests
+
+- Backend: 257 tests, all passing (22 new). Eight billing flows run against fake Razorpay and Stripe APIs built from the documented shapes: Super Admin prices (tax, gateway creation, retiring, currency by country, gateway failure stores nothing), Razorpay checkout with seats, forged confirmation, charge webhook, redelivery, IGST invoice and numbering, mid-period seat add-on, cancel and no resume; webhook signatures (wrong, stale, wrong secret, unknown business); failed payment, grace expiry and recovery; Stripe checkout with the invoice arriving first, export invoice, upgrade, seats, downgrade that waits for period end, undo, sweeper applying it, cancel and resume, failed renewal and cancellation, subscribing again; plan must fit usage; permissions and another business's invoices; trial reminder and end. RLS tests cover the five new tables, and the app role is refused when it tries to rewrite invoices, payments, events, prices or invoice numbers. Unit tests cover GSTIN check digits, the financial year in Indian time, the GST split and Stripe form encoding.
+- `ruff`, `mypy --strict`, `eslint`, `tsc`, `next build` and `alembic check`: clean.
+- Browser walkthrough against the running stack with local stand-ins for both gateways (screenshots in the project files under `phase7/`): Super Admin adding a price, trial billing page, invalid GSTIN, Razorpay Checkout, active plan with the invoice, CGST and SGST invoice and its print view, seats blocking a downgrade, scheduled downgrade, cancel confirmation, dark mode, a phone at 390 px with no sideways scrolling, a US business on USD prices, Stripe Checkout, and the export invoice.
+
+### Not verified here
+
+- Real Razorpay and Stripe accounts in test mode. The clients follow the documented APIs and were exercised against fakes of them; the first real test purchase in each gateway is a go-live step (docs/BILLING.md, "Setting up for real").
+- Razorpay Checkout's own script was replaced by a stand-in in the browser run (this environment can't reach it).
+
+### Known limitations of Phase 7
+
+- No refunds or credit notes in the app (use the gateway dashboard), no coupons.
+- A Razorpay cancellation can't be undone (Razorpay has no resume for it); the business subscribes again after it ends.
+- Changing currency means cancelling and subscribing again.
+- The SAC code, GST rate, LUT and invoice prefix must be confirmed by XploSys's accountant before going live.
 
 ## Phase 6 report
 
@@ -211,9 +242,9 @@
 
 ## Open decisions (need the owner's input)
 
-1. Approve Phase 3 and start Phase 4 (RAG knowledge engine).
+1. Approve Phase 7 and start Phase 8 (security hardening).
 2. Production object storage provider (decided by Phase 9).
-3. Billing entity for UK/US customers (affects Stripe).
+3. Billing entity for UK/US customers (affects Stripe), and the GST details for invoices: SAC code, LUT number, invoice prefix (docs/BILLING.md).
 4. Legal review of Meta's WhatsApp Business Solution Terms for AI use, and of DPDP/GDPR obligations.
 
 ## Actions for XploSys outside the code (start now)

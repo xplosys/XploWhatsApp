@@ -10,6 +10,7 @@ AI-powered WhatsApp customer engagement and automation platform by XploSys. Mult
 - [docs/KNOWLEDGE.md](docs/KNOWLEDGE.md): knowledge base uploads, scanning, embeddings, retrieval and settings
 - [docs/CONVERSATIONS.md](docs/CONVERSATIONS.md): inbox, takeover and handover, assignment, notes, contacts and tags, AI summaries, unanswered questions and leads
 - [docs/ANALYTICS.md](docs/ANALYTICS.md): overview and analytics figures, how each is counted, and who sees them
+- [docs/BILLING.md](docs/BILLING.md): plans and prices, Razorpay and Stripe, webhooks, plan changes and seats, GST invoices
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md): phased plan
 
 Stack: Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Celery, PostgreSQL 17 + pgvector, Redis, Next.js 16 + TypeScript + Tailwind CSS 4, Docker Compose.
@@ -35,6 +36,8 @@ The one-shot `migrate` service creates the database roles, runs migrations, seed
 For the knowledge base, set `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` in `.env` (any long random values in development). To scan uploads for viruses locally, set `CLAMAV_HOST=clamav` and start with `docker compose --profile scan up -d` (ClamAV needs about 3 to 4 GB of memory). As Super Admin, activate an embedding model so businesses can choose it (docs/KNOWLEDGE.md).
 
 To connect WhatsApp, fill in the `META_*` lines in `.env` (see docs/META_INTEGRATION.md §7 for where each value comes from and how to set up the webhook). Without them the WhatsApp page lists what is missing.
+
+To sell plans, fill in the `RAZORPAY_*` (INR) and `STRIPE_*` (USD, GBP, EUR) lines and the `SELLER_*` invoice details in `.env`, point each gateway's webhook at `/api/v1/webhooks/razorpay` or `/stripe`, then create plans and prices as Super Admin (docs/BILLING.md). Without keys the Billing page says payments aren't switched on yet.
 
 For the AI assistant, optionally put XploSys's own provider keys in `OPENAI_API_KEY`, `GEMINI_API_KEY` and `DEEPSEEK_API_KEY` (businesses can also use their own keys). Then, as Super Admin, sync models, add prices and activate the models businesses may use (docs/AI_PROVIDERS.md §2).
 

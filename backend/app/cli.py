@@ -23,6 +23,13 @@ DEFAULT_PLANS = [
         "name": "Free trial",
         "description": "14-day trial with core features.",
         "trial_days": 14,
+        "is_public": False,
+        "sort_order": 0,
+        "features": [
+            "1 WhatsApp number",
+            "AI replies from your own documents",
+            "Shared inbox and lead capture",
+        ],
         "limits": {
             "max_users": 3,
             "max_whatsapp_numbers": 1,
