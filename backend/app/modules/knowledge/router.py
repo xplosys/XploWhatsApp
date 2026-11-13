@@ -151,7 +151,7 @@ async def update_knowledge_settings(body: SettingsUpdate, ctx: Manager, meta: Me
 
 
 @router.post("/settings/reindex", response_model=SettingsOut)
-async def retry_reindex(ctx: Manager) -> SettingsOut:
+async def retry_reindex(ctx: Manager, meta: Meta) -> SettingsOut:
     row = await service.ensure_settings(ctx.session, ctx.tenant_id, lock=True)
     if row.pending_embedding_model_pk is None:
         raise ValidationFailed("No embedding model change is in progress.", code="nothing_to_reindex")
@@ -161,6 +161,16 @@ async def retry_reindex(ctx: Manager) -> SettingsOut:
     row.pending_embedding_model_pk = None
     await service.change_embedding_model(ctx.session, row, model, ctx.user.id)
     await ctx.session.flush()
+    await record(
+        ctx.session,
+        "knowledge.reindex_retried",
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user.id,
+        meta=meta,
+        target_type="knowledge_settings",
+        target_id=row.id,
+        details={"model": model.model_id},
+    )
     return await _settings_out(ctx)
 
 
@@ -364,9 +374,10 @@ async def refresh(document_id: uuid.UUID, ctx: Manager, meta: Meta) -> DocumentD
 
 
 @router.post("/documents/{document_id}/versions/{number}/retry", response_model=DocumentDetail)
-async def retry(document_id: uuid.UUID, number: int, ctx: Manager) -> DocumentDetail:
+async def retry(document_id: uuid.UUID, number: int, ctx: Manager, meta: Meta) -> DocumentDetail:
     doc = await service.get_document(ctx.session, ctx.tenant_id, document_id, lock=True)
     await service.retry(ctx.session, doc, number)
+    await _audit(ctx, meta, "knowledge.version_retried", doc, version=number)
     return await _detail(ctx, doc)
 
 

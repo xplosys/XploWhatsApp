@@ -31,6 +31,10 @@ class Permission(StrEnum):
     CONTACTS_MANAGE = "contacts:manage"
     LEADS_MANAGE = "leads:manage"
     ANALYTICS_READ = "analytics:read"
+    # Erase a customer's data on request (DPDP Act / GDPR right to erasure).
+    PRIVACY_MANAGE = "privacy:manage"
+    # Business-wide security settings, full data export and deleting the business.
+    SECURITY_MANAGE = "security:manage"
 
 
 _AGENT = {
@@ -53,8 +57,9 @@ _ADMIN = _SUPERVISOR | {
     Permission.WHATSAPP_MANAGE,
     Permission.AI_CONFIGURE,
     Permission.KNOWLEDGE_MANAGE,
+    Permission.PRIVACY_MANAGE,
 }
-_OWNER = _ADMIN | {Permission.BILLING_MANAGE}
+_OWNER = _ADMIN | {Permission.BILLING_MANAGE, Permission.SECURITY_MANAGE}
 
 ROLE_PERMISSIONS: dict[TenantRole, frozenset[Permission]] = {
     TenantRole.AGENT: frozenset(_AGENT),

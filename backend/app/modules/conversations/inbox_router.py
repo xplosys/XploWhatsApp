@@ -235,9 +235,19 @@ async def list_notes(conversation_id: uuid.UUID, ctx: Reader) -> list[NoteOut]:
 
 
 @router.post("/conversations/{conversation_id}/notes", response_model=NoteOut, status_code=201)
-async def add_note(conversation_id: uuid.UUID, body: NoteIn, ctx: Replier) -> NoteOut:
+async def add_note(conversation_id: uuid.UUID, body: NoteIn, ctx: Replier, meta: Meta) -> NoteOut:
     conv = await inbox.get_conversation(ctx.session, ctx.tenant_id, conversation_id)
     note = await inbox.add_note(ctx.session, conv, ctx.user.id, body.body)
+    await record(
+        ctx.session,
+        "conversation.note_added",
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user.id,
+        meta=meta,
+        target_type="conversation_note",
+        target_id=note.id,
+        details={"conversation_id": str(conversation_id)},
+    )
     return _note_out(ctx, note, {ctx.user.id: ctx.user.full_name})
 
 
@@ -249,7 +259,9 @@ async def _own_note(ctx: TenantContext, conversation_id: uuid.UUID, note_id: uui
 
 
 @router.patch("/conversations/{conversation_id}/notes/{note_id}", response_model=NoteOut)
-async def edit_note(conversation_id: uuid.UUID, note_id: uuid.UUID, body: NoteIn, ctx: Replier) -> NoteOut:
+async def edit_note(
+    conversation_id: uuid.UUID, note_id: uuid.UUID, body: NoteIn, ctx: Replier, meta: Meta
+) -> NoteOut:
     """Only the author can edit a note."""
     note = await _own_note(ctx, conversation_id, note_id)
     if note.author_user_id != ctx.user.id:
@@ -258,6 +270,16 @@ async def edit_note(conversation_id: uuid.UUID, note_id: uuid.UUID, body: NoteIn
     if not text:
         raise ValidationFailed("The note is empty.", code="empty_note")
     note.body = text
+    await record(
+        ctx.session,
+        "conversation.note_edited",
+        tenant_id=ctx.tenant_id,
+        actor_user_id=ctx.user.id,
+        meta=meta,
+        target_type="conversation_note",
+        target_id=note.id,
+        details={"conversation_id": str(conversation_id)},
+    )
     await ctx.session.flush()
     await ctx.session.refresh(note)
     return _note_out(ctx, note, {ctx.user.id: ctx.user.full_name})

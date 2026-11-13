@@ -7,7 +7,16 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,7 +35,13 @@ ROLE_CHECK = "role IN ('owner', 'admin', 'supervisor', 'agent')"
 
 class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
     __tablename__ = "tenants"
-    __table_args__ = (CheckConstraint("status IN ('active', 'suspended')", name="status_valid"),)
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'suspended')", name="status_valid"),
+        CheckConstraint(
+            "message_retention_days IS NULL OR message_retention_days BETWEEN 30 AND 3650",
+            name="message_retention_days_range",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
@@ -41,6 +56,12 @@ class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
     industry: Mapped[str | None] = mapped_column(String(64))
     settings: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Security and privacy settings (Phase 8).
+    require_mfa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    message_retention_days: Mapped[int | None] = mapped_column(Integer)
+    # Set when the owner deletes the business: data is purged after this date unless restored.
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TenantMembership(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):

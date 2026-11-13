@@ -31,6 +31,7 @@ APPEND_ONLY = {
     "billing_invoices",
     "billing_transactions",
     "billing_events",
+    "data_exports",
 }
 # The app role has no UPDATE at all on these.
 NO_UPDATE = {
@@ -254,6 +255,10 @@ INSERTS: dict[str, Callable[[uuid.UUID, uuid.UUID, uuid.UUID], tuple[str, dict[s
         "VALUES (:id, :t, 'stripe', :ref, 'invoice.paid', '{}', 'pending', 0)",
         {"id": uuid.uuid4(), "t": t, "ref": f"evt_{uuid.uuid4().hex}"},
     ),
+    "data_exports": lambda t, u, p: (
+        "INSERT INTO data_exports (id, tenant_id, status) VALUES (:id, :t, 'queued')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
 }
 
 
@@ -402,6 +407,7 @@ async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
             {"p": price},
         )
     statements += [
+        ("INSERT INTO data_exports (id, tenant_id, status) VALUES (gen_random_uuid(), :t, 'ready')", {}),
         (
             "INSERT INTO billing_profiles (id, tenant_id, legal_name, country) "
             "VALUES (gen_random_uuid(), :t, 'Two Ltd', 'IN')",

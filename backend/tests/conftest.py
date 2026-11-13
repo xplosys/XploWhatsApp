@@ -68,6 +68,7 @@ def containers(clamd: FakeClamd) -> Iterator[dict[str, str]]:
             "EMAIL_BACKEND": "memory",
             "COOKIE_SECURE": "false",
             "RATE_LIMIT_AUTH_PER_MINUTE": "10000",
+            "RATE_LIMIT_DEFAULT_PER_MINUTE": "10000",
             "FRONTEND_BASE_URL": "http://app.test",
             "TASK_DISPATCH": "memory",
             # Platform AI keys exist; tests decide per business whether to use them.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -77,6 +78,17 @@ LANGUAGE_NAMES = {"en": "English", "hi": "Hindi"}
 
 # Phrases that only appear in the system prompt. A reply that contains one is leaking it.
 PROMPT_MARKERS = ("BUSINESS INFORMATION START", "RULES FOR EVERY REPLY")
+# Lines that frame the prompt's sections. Text from documents or settings must not be
+# able to close the business information early and start "new rules" of its own.
+_GAP = r"[\s\u200b-\u200f\u2060\ufeff_-]*"  # spaces, underscores, dashes or invisible characters
+_FRAME_RE = re.compile(
+    rf"business{_GAP}information{_GAP}(?:start|end)|rules{_GAP}for{_GAP}every{_GAP}reply", re.I
+)
+
+
+def neutralize(text: str) -> str:
+    """Untrusted text placed inside the prompt: remove anything that imitates its frame."""
+    return _FRAME_RE.sub("[removed]", text)
 
 
 def system_prompt(
@@ -92,14 +104,15 @@ def system_prompt(
         language = f"Reply in {LANGUAGE_NAMES.get(default_language, default_language)}."
     sections = []
     if config.business_description:
-        sections.append(f"About the business:\n{config.business_description}")
+        sections.append(f"About the business:\n{neutralize(config.business_description)}")
     if config.business_hours:
-        sections.append(f"Opening hours:\n{config.business_hours}")
+        sections.append(f"Opening hours:\n{neutralize(config.business_hours)}")
     if config.instructions:
-        sections.append(f"Facts, services, prices and policies:\n{config.instructions}")
+        sections.append(f"Facts, services, prices and policies:\n{neutralize(config.instructions)}")
     if knowledge:
         excerpts = "\n\n".join(
-            f'[{i}] From "{p.title}":\n{p.content}' for i, p in enumerate(knowledge, start=1)
+            f'[{i}] From "{neutralize(p.title)}":\n{neutralize(p.content)}'
+            for i, p in enumerate(knowledge, start=1)
         )
         sections.append(
             "Excerpts from the business's documents that may answer this question "
@@ -121,14 +134,19 @@ BUSINESS INFORMATION START
 BUSINESS INFORMATION END"""
 
 
-def grounding_text(config: AssistantConfig, turns: list[Turn], knowledge: Sequence[Passage] = ()) -> str:
-    """Text a reply's facts may come from: the business's information, the knowledge
-    excerpts given to the model, and the customer's own messages (an assistant may
-    repeat what the customer said)."""
+def grounding_text(config: AssistantConfig, knowledge: Sequence[Passage] = ()) -> str:
+    """Text a reply's facts may come from: the business's information and the knowledge
+    excerpts given to the model."""
     parts = [config.business_description, config.business_hours, config.instructions]
     parts += [p.content for p in knowledge]
-    parts += [t.text for t in turns if t.role == "user"]
     return "\n".join(p for p in parts if p)
+
+
+def customer_text(turns: list[Turn]) -> str:
+    """What the customer wrote. A reply may repeat their own phone number, email or a
+    time they asked for, but never a price, discount or link they typed: otherwise a
+    customer could make the business's number "confirm" any offer they invent."""
+    return "\n".join(t.text for t in turns if t.role == "user")
 
 
 def trim_history(turns: list[Turn], max_chars: int) -> list[Turn]:

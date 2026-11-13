@@ -138,3 +138,56 @@ def generate_secrets() -> None:
 
 if __name__ == "__main__":
     cli()
+
+
+# ---- key rotation (docs/SECURITY.md, "Rotating keys") --------------------------------
+
+
+@cli.command("rotate-jwt-key")
+def rotate_jwt_key_command() -> None:
+    """Print a new token-signing key. The current key keeps verifying tokens already issued."""
+    from app.core.security.rotation import rotate_jwt_key
+
+    settings = get_settings()
+    current = settings.jwt_private_key_pem.get_secret_value() if settings.jwt_private_key_pem else None
+    values = rotate_jwt_key(settings.jwt_key_id, current)
+    typer.echo("# Replace these three lines in .env, then restart the API and worker.")
+    for name, value in values.items():
+        typer.echo(f"{name}='{value}'")
+
+
+@cli.command("new-encryption-key")
+def new_encryption_key_command() -> None:
+    """Print ENCRYPTION_KEYS with a new active key added. Then restart and run rewrap-secrets."""
+    from app.core.security.rotation import add_encryption_key
+
+    settings = get_settings()
+    existing = settings.encryption_keys.get_secret_value() if settings.encryption_keys else None
+    values = add_encryption_key(existing)
+    typer.echo("# Replace these two lines in .env, restart the API and worker, then run rewrap-secrets.")
+    for name, value in values.items():
+        typer.echo(f"{name}={value}")
+
+
+@cli.command("rewrap-secrets")
+def rewrap_secrets_command(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report what would change and change nothing."),
+) -> None:
+    """Re-encrypt every stored secret under the active encryption key."""
+    from app.core.security.rotation import rewrap_secrets
+
+    report = asyncio.run(rewrap_secrets(dry_run=dry_run))
+    typer.echo(f"Active key: {report.active_version}{' (dry run, nothing saved)' if dry_run else ''}")
+    for name in sorted(set(report.rewrapped) | set(report.already_current)):
+        typer.echo(
+            f"  {name}: {report.rewrapped.get(name, 0)} re-encrypted, "
+            f"{report.already_current.get(name, 0)} already current"
+        )
+    if not report.ok:
+        for name, ids in report.failed.items():
+            if ids:
+                typer.echo(f"  {name}: could not decrypt {len(ids)}: {', '.join(ids[:10])}", err=True)
+        typer.echo("Nothing was saved. Keep every old key in ENCRYPTION_KEYS and investigate.", err=True)
+        raise typer.Exit(code=1)
+    if not dry_run:
+        typer.echo("Done. Old key versions can be removed from ENCRYPTION_KEYS after a backup cycle.")

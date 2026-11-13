@@ -99,7 +99,23 @@ class Settings(BaseSettings):
 
     # Rate limits (requests per minute)
     rate_limit_auth_per_minute: int = 20
+    # Every signed-in request, per person.
     rate_limit_default_per_minute: int = 300
+    # Webhook deliveries per source address (Meta, Razorpay and Stripe send in bursts).
+    rate_limit_webhook_per_minute: int = 3000
+    # Proxies whose X-Real-IP header is believed (CIDRs). Any other peer is the client itself,
+    # so a caller that reaches the API directly can't pick its own address for rate limits.
+    trusted_proxies: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["127.0.0.1/32", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+    )
+    # Strict-Transport-Security on API responses outside development.
+    hsts_max_age_seconds: int = 63072000
+
+    # Privacy (DPDP Act 2023 / GDPR)
+    business_deletion_grace_days: int = 30
+    data_export_ttl_days: int = 7
+    data_exports_per_day: int = 3
+    webhook_event_retention_days: int = 30
 
     sentry_dsn: SecretStr | None = None
 
@@ -207,7 +223,11 @@ class Settings(BaseSettings):
     invoice_prefix: str = "XW"
 
     @field_validator(
-        "cors_allowed_origins", "whatsapp_opt_out_keywords", "whatsapp_opt_in_keywords", mode="before"
+        "cors_allowed_origins",
+        "whatsapp_opt_out_keywords",
+        "whatsapp_opt_in_keywords",
+        "trusted_proxies",
+        mode="before",
     )
     @classmethod
     def _split_csv(cls, value: object) -> object:

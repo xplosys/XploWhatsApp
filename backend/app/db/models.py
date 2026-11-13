@@ -38,6 +38,7 @@ from app.modules.knowledge.models import (
     KnowledgeSettings,
 )
 from app.modules.leads.models import Lead, LeadActivity
+from app.modules.privacy.models import DataExport
 from app.modules.tenants.models import Tenant, TenantInvitation, TenantMembership
 from app.modules.webhooks.models import OutboxJob, WebhookEvent
 from app.modules.whatsapp.models import MessageTemplate, WhatsAppAccount, WhatsAppCredential, WhatsAppNumber
@@ -56,6 +57,7 @@ __all__ = [
     "Conversation",
     "ConversationNote",
     "ConversationSummary",
+    "DataExport",
     "HandoverSession",
     "Invoice",
     "InvoiceSequence",
