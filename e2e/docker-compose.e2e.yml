@@ -1,0 +1,53 @@
+# End-to-end and load tests: the development stack, with Meta's Graph API and the AI
+# providers replaced by e2e/fakes/server.py. Never use this for anything real.
+#
+#   docker compose -f docker-compose.yml -f e2e/docker-compose.e2e.yml up -d --build --wait
+#
+# Paths are relative to the repository root (the first compose file's folder).
+
+x-e2e-env: &e2e-env
+  META_APP_ID: "1234567890"
+  META_APP_SECRET: e2e-app-secret
+  META_WEBHOOK_VERIFY_TOKEN: e2e-verify-token
+  META_EMBEDDED_SIGNUP_CONFIG_ID: e2e-config
+  META_GRAPH_BASE_URL: http://fakes:9000/graph
+  OPENAI_BASE_URL: http://fakes:9000/ai/openai
+  GEMINI_BASE_URL: http://fakes:9000/ai/gemini
+  DEEPSEEK_BASE_URL: http://fakes:9000/ai/deepseek
+  GEMINI_API_KEY: e2e-platform-gemini-key
+  AI_REPLY_DEBOUNCE_SECONDS: "1"
+  # Every test browser and load-test client comes from one address.
+  RATE_LIMIT_AUTH_PER_MINUTE: "1000"
+  RATE_LIMIT_DEFAULT_PER_MINUTE: "100000"
+  RATE_LIMIT_WEBHOOK_PER_MINUTE: "100000"
+
+services:
+  fakes:
+    build: ./backend
+    environment:
+      PYTHONPATH: /app
+      META_APP_ID: "1234567890"
+      META_APP_SECRET: e2e-app-secret
+      E2E_WEBHOOK_URL: http://api:8000/api/v1/webhooks/whatsapp
+      E2E_DEFAULT_AI_ANSWER: ${E2E_DEFAULT_AI_ANSWER:-}
+    command: ["uvicorn", "--app-dir", "/e2e/fakes", "server:app", "--host", "0.0.0.0", "--port", "9000"]
+    volumes:
+      - ./backend/tests:/app/tests:ro
+      - ./e2e/fakes:/e2e/fakes:ro
+    ports:
+      - "127.0.0.1:9000:9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/_control/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  api:
+    environment: *e2e-env
+    depends_on:
+      fakes: { condition: service_healthy }
+  worker:
+    environment: *e2e-env
+  beat:
+    environment: *e2e-env

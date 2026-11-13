@@ -62,6 +62,49 @@ jobs:
           docker build -t xplowhatsapp-api ./backend
           docker build -t xplowhatsapp-frontend ./frontend
 
+  e2e:
+    runs-on: ubuntu-24.04
+    needs: [backend, frontend]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: e2e/pnpm-lock.yaml
+      - name: Test environment
+        run: e2e/scripts/test-env.sh
+      - name: Start the stack (fake Meta and AI services)
+        run: docker compose -f docker-compose.yml -f e2e/docker-compose.e2e.yml up -d --build
+      - name: Browser
+        working-directory: e2e
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: End-to-end tests
+        working-directory: e2e
+        run: pnpm test
+      - name: Service logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f e2e/docker-compose.e2e.yml logs --no-color --tail 300
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 14
+          if-no-files-found: ignore
+
   security:
     runs-on: ubuntu-24.04
     steps:
@@ -131,4 +174,4 @@ jobs:
       - name: Nginx configuration
         run: deploy/scripts/test-nginx.sh
       - name: Shell scripts
-        run: shellcheck deploy/scripts/*.sh deploy/backup/*.sh deploy/nginx/*.sh
+        run: shellcheck deploy/scripts/*.sh deploy/backup/*.sh deploy/nginx/*.sh e2e/scripts/*.sh
