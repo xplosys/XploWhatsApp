@@ -143,6 +143,9 @@ async def remove_member(ctx: TenantContext, membership_id: uuid.UUID, meta: Requ
     if m.role == TenantRole.OWNER.value and await _owner_count(ctx.session, ctx.tenant_id) <= 1:
         raise Conflict("A business must keep at least one owner.", code="last_owner")
     await ctx.session.delete(m)
+    from app.modules.conversations.inbox import unassign_member
+
+    await unassign_member(ctx.session, ctx.tenant_id, m.user_id)
     await audit.record(
         ctx.session,
         "member.removed",

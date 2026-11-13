@@ -6,8 +6,12 @@ from app.modules.ai.router import router as ai_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
 from app.modules.billing.router import router as billing_router
+from app.modules.conversations.contacts_router import router as contacts_router
+from app.modules.conversations.inbox_router import router as inbox_router
 from app.modules.conversations.router import router as conversations_router
+from app.modules.conversations.unanswered_router import router as unanswered_router
 from app.modules.knowledge.router import router as knowledge_router
+from app.modules.leads.router import router as leads_router
 from app.modules.tenants.router import router as tenants_router
 from app.modules.webhooks.router import router as webhooks_router
 from app.modules.whatsapp.router import router as whatsapp_router
@@ -21,8 +25,12 @@ for r in (
     admin_router,
     whatsapp_router,
     conversations_router,
+    inbox_router,
+    contacts_router,
+    leads_router,
     ai_router,
     ai_admin_router,
+    unanswered_router,
     knowledge_router,
     webhooks_router,
 ):

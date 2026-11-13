@@ -47,6 +47,10 @@ celery_app.conf.update(
             "task": "app.workers.tasks.knowledge.sweep",
             "schedule": 60.0,
         },
+        "sweep-conversation-summaries": {
+            "task": "app.workers.tasks.messages.sweep_summaries",
+            "schedule": 120.0,
+        },
         "check-whatsapp-accounts": {
             "task": "app.workers.tasks.whatsapp.check_all_accounts",
             "schedule": 24 * 3600.0,
