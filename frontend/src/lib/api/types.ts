@@ -182,9 +182,25 @@ export interface Contact {
   username: string | null;
   profile_name: string | null;
   name: string | null;
+  language: string | null;
+  tags: string[];
   consent_status: "unknown" | "opted_in" | "opted_out";
+  consent_source: string | null;
   consent_updated_at: string | null;
   last_inbound_at: string | null;
+  created_at: string;
+}
+
+export interface UserRef {
+  id: string;
+  name: string;
+}
+
+export interface Handover {
+  started_by: "ai" | "agent" | "system";
+  reason: string;
+  started_at: string;
+  agent: UserRef | null;
 }
 
 export interface Conversation {
@@ -201,6 +217,131 @@ export interface Conversation {
   last_message_preview: string | null;
   ai_enabled: boolean;
   needs_human: boolean;
+  awaiting_reply: boolean;
+  assigned_to: UserRef | null;
+  assigned_at: string | null;
+  closed_at: string | null;
+  handover: Handover | null;
+}
+
+export type InboxView = "open" | "mine" | "unassigned" | "needs_human" | "awaiting" | "closed";
+
+export type InboxCounts = Record<InboxView | "unread", number>;
+
+export interface ConversationNote {
+  id: string;
+  body: string;
+  author: UserRef | null;
+  created_at: string;
+  updated_at: string;
+  can_edit: boolean;
+  can_delete: boolean;
+}
+
+export interface ConversationSummary {
+  status: "queued" | "ready" | "failed";
+  summary: string | null;
+  error: string | null;
+  provider: string | null;
+  model: string | null;
+  generated_at: string | null;
+  message_count: number;
+  new_messages: number;
+}
+
+export interface HandoverHistory {
+  id: string;
+  started_by: "ai" | "agent" | "system";
+  reason: string;
+  started_at: string;
+  agent: UserRef | null;
+  released_at: string | null;
+  released_by: UserRef | null;
+}
+
+export interface ContactDetail extends Contact {
+  conversations: {
+    id: string;
+    number_id: string;
+    number_display: string | null;
+    status: "open" | "closed";
+    last_message_at: string | null;
+    assigned_to: UserRef | null;
+    ai_enabled: boolean;
+    needs_human: boolean;
+  }[];
+  leads: {
+    id: string;
+    title: string;
+    status: LeadStatus;
+    value: string | null;
+    currency: string | null;
+    owner: UserRef | null;
+    updated_at: string;
+  }[];
+}
+
+export interface TagCount {
+  tag: string;
+  contacts: number;
+}
+
+// ---- Leads (Phase 5) ----
+
+export type LeadStatus = "new" | "contacted" | "qualified" | "won" | "lost";
+
+export interface Lead {
+  id: string;
+  title: string;
+  status: LeadStatus;
+  source: "whatsapp" | "manual";
+  value: string | null;
+  currency: string | null;
+  contact: { id: string; name: string | null; phone_e164: string | null };
+  conversation_id: string | null;
+  owner: UserRef | null;
+  created_by: UserRef | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+export interface LeadActivity {
+  id: string;
+  type: "created" | "status_changed" | "owner_changed" | "value_changed" | "title_changed" | "note";
+  data: Record<string, string | null>;
+  actor: UserRef | null;
+  created_at: string;
+}
+
+export interface LeadDetail extends Lead {
+  activities: LeadActivity[];
+}
+
+export interface LeadSummary {
+  by_status: { status: LeadStatus; count: number }[];
+  open_value: { currency: string; total: string }[];
+  mine_open: number;
+  unowned_open: number;
+  default_currency: string | null;
+}
+
+export interface UnansweredQuestion {
+  id: string;
+  conversation_id: string;
+  message_id: string;
+  contact_name: string | null;
+  question: string;
+  reason: string;
+  retrieval_hits: number | null;
+  status: "open" | "resolved" | "dismissed";
+  resolved_by: UserRef | null;
+  resolved_at: string | null;
+  created_at: string;
+}
+
+export interface UnansweredPage extends Page<UnansweredQuestion> {
+  open: number;
 }
 
 export interface ChatMessage {
@@ -266,6 +407,7 @@ export interface AssistantConfig {
   reply_language: "match_customer" | "business_default";
   handover_message: string;
   max_reply_chars: number;
+  summary_on_handover: boolean;
   primary: ModelChoice;
   fallbacks: ModelChoice[];
 }

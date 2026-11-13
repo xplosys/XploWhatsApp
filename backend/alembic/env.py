@@ -20,6 +20,14 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+# Expression indexes (trigram search) that SQLAlchemy models can't describe; they are
+# created and dropped by hand in migrations, so autogenerate must not touch them.
+MANUAL_INDEXES = {"ix_contacts_search_trgm", "ix_messages_body_trgm", "ix_leads_title_trgm"}
+
+
+def _include_object(obj: object, name: str | None, type_: str, reflected: bool, compare_to: object) -> bool:
+    return not (type_ == "index" and name in MANUAL_INDEXES)
+
 
 def _url() -> str:
     override = config.attributes.get("database_url")
@@ -27,13 +35,24 @@ def _url() -> str:
 
 
 def run_migrations_offline() -> None:
-    context.configure(url=_url(), target_metadata=target_metadata, literal_binds=True, compare_type=True)
+    context.configure(
+        url=_url(),
+        target_metadata=target_metadata,
+        literal_binds=True,
+        compare_type=True,
+        include_object=_include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def _run(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        include_object=_include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

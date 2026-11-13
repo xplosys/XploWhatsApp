@@ -274,9 +274,11 @@ Window, categories and limits follow Meta's current policies; rules are data-dri
 ### 3.8 Conversation processing rules
 
 - **Ordering:** a short debounce window (default 2 s, `AI_REPLY_DEBOUNCE_SECONDS`) merges bursts of messages into a single AI turn: each inbound message schedules a reply job, and a job that is no longer for the latest inbound message stops. A per-conversation Redis lock (`ai_reply_lock:{conversation}`) serialises the rest. A Postgres advisory lock was the first plan, but it would hold a database connection open for the whole provider call (ADR 004).
-- **Handover:** an active `human_handover_sessions` row, or `conversations.ai_enabled = false`, stops automatic replies until released. Agents can release, or it auto-expires per tenant rules.
-- **Context window:** last N messages (token-budgeted) plus a rolling `conversation_summaries` entry refreshed every K messages by a background task.
-- **Unanswered queries:** when retrieval finds nothing above threshold, the message is flagged, the fallback or handover path runs, and it shows up in analytics so the business can add knowledge.
+- **Handover (Phase 5):** `conversations.ai_enabled = false` stops automatic replies; a `human_handover_sessions` row records each period people answer (started by the assistant, by a person taking over, or by turning AI off; at most one open per conversation by a partial unique index). The assistant handing over sets `needs_human`; a person taking over clears it; "Hand back to AI" closes the session and turns replies back on. There is no automatic expiry: a conversation stays with people until someone hands it back.
+- **Assignment:** `assigned_user_id` (any active member). Agents may pick up an unassigned conversation or let go of their own; supervisors and above may assign anyone. Removing a member returns their conversations, open takeovers and leads to the shared queue.
+- **Inbox state:** `awaiting_reply` is set by a customer message (not a reaction) and cleared by a reply from a person or the assistant; `closed_at` is set when closed and cleared when the customer writes again.
+- **Summaries (Phase 5):** one `conversation_summaries` row per conversation, written by a worker task with the assistant's model chain from the last 80 messages (transcript treated as data), on AI handover (assistant setting `summary_on_handover`, on by default) or on request. Staleness is shown as messages since. Not used as model context.
+- **Unanswered questions (Phase 5):** each AI handover records the customer's question, the reason and the number of passages retrieved in `unanswered_questions`, listed on the Knowledge page for owners and admins to resolve or dismiss.
 
 ---
 
@@ -319,7 +321,11 @@ erDiagram
   contacts ||--o{ conversations : has
   whatsapp_numbers ||--o{ conversations : on
   conversations ||--o{ messages : contains
-  conversations ||--o{ conversation_summaries : summarised_by
+  conversations ||--o| conversation_summaries : summarised_by
+  conversations ||--o{ conversation_notes : noted
+  conversations ||--o{ unanswered_questions : asked
+  messages ||--o| unanswered_questions : question
+  users ||--o{ conversations : assigned
   conversations ||--o{ human_handover_sessions : handed_over
   users ||--o{ human_handover_sessions : agent
   tenants ||--o{ webhook_events : receives
@@ -332,6 +338,7 @@ erDiagram
   ai_models ||--o{ knowledge_chunk_embeddings : by_model
   tenants ||--o| knowledge_settings : configures
   contacts ||--o{ leads : becomes
+  conversations ||--o{ leads : source
   leads ||--o{ lead_activities : logs
   subscription_plans ||--o{ subscriptions : priced_by
   tenants ||--o{ subscriptions : subscribes
@@ -491,18 +498,44 @@ erDiagram
     uuid number_id FK
     string status
     bool ai_enabled
-    uuid assigned_user_id
+    bool needs_human
+    uuid assigned_user_id FK
+    timestamptz assigned_at
+    bool awaiting_reply
+    timestamptz closed_at
     timestamptz last_inbound_at
     timestamptz service_window_expires_at
-    bool unanswered
   }
   conversation_summaries {
     uuid id PK
     uuid tenant_id FK
-    uuid conversation_id FK
+    uuid conversation_id FK "unique"
+    string status
     text summary
-    uuid up_to_message_id
-    int token_count
+    string error
+    string provider
+    string model
+    int message_count
+    uuid last_message_id
+    timestamptz generated_at
+  }
+  conversation_notes {
+    uuid id PK
+    uuid tenant_id FK
+    uuid conversation_id FK
+    uuid author_user_id FK
+    text body
+  }
+  unanswered_questions {
+    uuid id PK
+    uuid tenant_id FK
+    uuid conversation_id FK
+    uuid message_id FK "unique"
+    text question
+    string reason
+    int retrieval_hits
+    string status
+    uuid resolved_by_user_id FK
   }
   messages {
     uuid id PK
@@ -612,21 +645,25 @@ erDiagram
     uuid id PK
     uuid tenant_id FK
     uuid conversation_id FK
+    string started_by
     uuid agent_user_id FK
     string reason
     timestamptz started_at
     timestamptz released_at
+    uuid released_by_user_id FK
   }
   leads {
     uuid id PK
     uuid tenant_id FK
     uuid contact_id FK
-    uuid conversation_id
+    uuid conversation_id FK
+    string title
     string status
     string source
-    numeric score
-    jsonb fields
-    uuid owner_user_id
+    numeric value
+    string currency
+    uuid owner_user_id FK
+    timestamptz closed_at
   }
   lead_activities {
     uuid id PK
@@ -898,5 +935,10 @@ Full detail, including the approval sequence and what can be built before approv
 | 028 | Web pages are fetched without trusting DNS twice: every hop is resolved, every address must be public, the request goes to the checked IP with the original Host and TLS name, redirects are followed by hand (max 3), ports 80 and 443 only, no proxy settings from the environment | Accepted (Phase 4) |
 | 029 | Uploads are checked by content, not by name: magic bytes must match the extension, Office files are opened as zips with entry, size and ratio limits, macro-enabled and legacy binary Office files are refused, text must be UTF-8 or UTF-16 with a byte order mark; the request body is capped before it is read | Accepted (Phase 4) |
 | 030 | Retrieval embeds the customer's latest message and their last three messages together in one call and keeps each passage's best score above the business's threshold; retrieved passages go into the prompt as reference material (not instructions) and count as grounding for the validator, and their IDs and scores are kept in the message's provenance | Accepted (Phase 4) |
+| 031 | Handover is a session record, not only a flag: `conversations.ai_enabled` stops replies and `human_handover_sessions` keeps who took it, why, and when it went back, with at most one open session per conversation (partial unique index). The old per-conversation AI switch goes through the same takeover and release | Accepted (Phase 5) |
+| 032 | Agents can pick up unassigned conversations and leads or let go of their own; reassigning someone else's needs `conversations:assign` (supervisor and above). The same rule applies to lead owners | Accepted (Phase 5) |
+| 033 | Inbox search uses `ILIKE`-style substring matching on lowercased contact fields and message bodies, backed by `pg_trgm` GIN indexes created by hand in the migration (and excluded from autogenerate); LIKE wildcards in the query are escaped. Full-text search can replace it if volumes need it | Accepted (Phase 5) |
+| 034 | AI summaries run in a worker with the assistant's model chain and are recorded as usage with purpose `summary`; the transcript is wrapped as data; a lost job is re-sent by a sweeper through a definer function | Accepted (Phase 5) |
+| 035 | Lead history (`lead_activities`) is append-only for the app role (`UPDATE` and `DELETE` revoked); deleting a lead (supervisors and above) removes its history by cascade and is audited | Accepted (Phase 5) |
 
 Each will be written up under `docs/adr/` as it is implemented.

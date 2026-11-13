@@ -28,7 +28,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TenantScopedMixin, TimestampMixin, UUIDPrimaryKeyMixin
@@ -94,6 +94,7 @@ class Contact(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
             unique=True,
             postgresql_where=text("bsuid IS NOT NULL"),
         ),
+        Index("ix_contacts_tags", "tags", postgresql_using="gin"),
     )
 
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -116,6 +117,10 @@ class Contact(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
         JSONB, nullable=False, default=list, server_default="[]"
     )
     last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Free labels chosen by the business ("vip", "new patient"), lower case.
+    tags: Mapped[list[str]] = mapped_column(
+        ARRAY(String(40)), nullable=False, default=list, server_default="{}"
+    )
 
 
 class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
@@ -127,6 +132,7 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base)
         UniqueConstraint("tenant_id", "contact_id", "number_id"),
         CheckConstraint("status IN ('open', 'closed')", name="status_valid"),
         Index("ix_conversations_inbox", "tenant_id", "status", "last_message_at"),
+        Index("ix_conversations_assigned", "tenant_id", "assigned_user_id", "status"),
         ForeignKeyConstraint(
             ["tenant_id", "contact_id"], ["contacts.tenant_id", "contacts.id"], ondelete="CASCADE"
         ),
@@ -146,7 +152,15 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base)
     ai_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     # Set when the assistant handed the conversation to a person; cleared when AI is turned back on.
     needs_human: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    assigned_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    assigned_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The customer wrote last and nobody (person or assistant) has answered yet.
+    awaiting_reply: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     unread_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -201,3 +215,150 @@ class Message(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
     # For AI replies: provider, model, attempts, validation outcome and the message replied to.
     ai_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     media_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class ConversationNote(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
+    """An internal note on a conversation; never sent to the customer."""
+
+    __tablename__ = "conversation_notes"
+    __table_args__ = (
+        Index("ix_conversation_notes_conversation", "tenant_id", "conversation_id", "created_at"),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["conversations.tenant_id", "conversations.id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    author_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class HandoverStarter(StrEnum):
+    AI = "ai"
+    AGENT = "agent"
+    SYSTEM = "system"
+
+
+class HandoverSession(UUIDPrimaryKeyMixin, TenantScopedMixin, Base):
+    """A period during which people, not the assistant, answer a conversation."""
+
+    __tablename__ = "human_handover_sessions"
+    __table_args__ = (
+        CheckConstraint("started_by IN ('ai', 'agent', 'system')", name="started_by_valid"),
+        Index(
+            "uq_handover_active",
+            "conversation_id",
+            unique=True,
+            postgresql_where=text("released_at IS NULL"),
+        ),
+        Index("ix_handover_tenant_started", "tenant_id", "started_at"),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["conversations.tenant_id", "conversations.id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    started_by: Mapped[str] = mapped_column(String(16), nullable=False)
+    # needs_human, all_failed, blocked, agent_takeover, ...
+    reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    released_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
+class SummaryStatus(StrEnum):
+    QUEUED = "queued"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class ConversationSummary(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
+    """An AI-written summary for the people taking over a conversation."""
+
+    __tablename__ = "conversation_summaries"
+    __table_args__ = (
+        UniqueConstraint("conversation_id"),
+        CheckConstraint("status IN ('queued', 'ready', 'failed')", name="status_valid"),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["conversations.tenant_id", "conversations.id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=SummaryStatus.QUEUED)
+    summary: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(String(500))
+    provider: Mapped[str | None] = mapped_column(String(32))
+    model: Mapped[str | None] = mapped_column(String(200))
+    # How many messages the summary covers, and the newest of them.
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UnansweredStatus(StrEnum):
+    OPEN = "open"
+    RESOLVED = "resolved"
+    DISMISSED = "dismissed"
+
+
+class UnansweredQuestion(UUIDPrimaryKeyMixin, TimestampMixin, TenantScopedMixin, Base):
+    """A customer question the assistant could not answer, so the business can add
+    the missing information to its knowledge base or assistant settings."""
+
+    __tablename__ = "unanswered_questions"
+    __table_args__ = (
+        UniqueConstraint("message_id"),
+        CheckConstraint("status IN ('open', 'resolved', 'dismissed')", name="status_valid"),
+        Index("ix_unanswered_tenant_status", "tenant_id", "status", "created_at"),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["conversations.tenant_id", "conversations.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "message_id"], ["messages.tenant_id", "messages.id"], ondelete="CASCADE"
+        ),
+    )
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    message_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    # needs_human, all_failed, blocked
+    reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    retrieval_hits: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=UnansweredStatus.OPEN)
+    resolved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

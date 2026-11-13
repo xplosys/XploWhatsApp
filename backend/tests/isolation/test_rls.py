@@ -27,9 +27,10 @@ APPEND_ONLY = {
     "whatsapp_credentials",
     "usage_records",
     "bot_configuration_versions",
+    "lead_activities",
 }
 # The app role has no UPDATE at all on these.
-NO_UPDATE = {"audit_logs", "usage_records", "bot_configuration_versions"}
+NO_UPDATE = {"audit_logs", "usage_records", "bot_configuration_versions", "lead_activities"}
 
 
 def _tenant_tables() -> dict[str, str]:
@@ -191,12 +192,40 @@ INSERTS: dict[str, Callable[[uuid.UUID, uuid.UUID, uuid.UUID], tuple[str, dict[s
         "VALUES (:id, :t, :id, :id, :v)",
         {"id": uuid.uuid4(), "t": t, "v": "[" + ",".join(["0.1"] * 1536) + "]"},
     ),
+    "conversation_notes": lambda t, u, p: (
+        "INSERT INTO conversation_notes (id, tenant_id, conversation_id, body) VALUES (:id, :t, :id, 'forged')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "human_handover_sessions": lambda t, u, p: (
+        "INSERT INTO human_handover_sessions (id, tenant_id, conversation_id, started_by, reason) "
+        "VALUES (:id, :t, :id, 'agent', 'forged')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "conversation_summaries": lambda t, u, p: (
+        "INSERT INTO conversation_summaries (id, tenant_id, conversation_id, status, message_count) "
+        "VALUES (:id, :t, :id, 'ready', 0)",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "unanswered_questions": lambda t, u, p: (
+        "INSERT INTO unanswered_questions (id, tenant_id, conversation_id, message_id, question, reason, status) "
+        "VALUES (:id, :t, :id, :id, 'forged', 'needs_human', 'open')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "leads": lambda t, u, p: (
+        "INSERT INTO leads (id, tenant_id, contact_id, title, status, source) "
+        "VALUES (:id, :t, :id, 'Forged', 'new', 'manual')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "lead_activities": lambda t, u, p: (
+        "INSERT INTO lead_activities (id, tenant_id, lead_id, type, data) VALUES (:id, :t, :id, 'note', '{}')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
 }
 
 
 async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
     """One row in every WhatsApp table for the given tenant, written as that tenant."""
-    acc, num, contact, conv, bot, doc, ver, chunk = (uuid.uuid4() for _ in range(8))
+    acc, num, contact, conv, bot, doc, ver, chunk, msg, lead = (uuid.uuid4() for _ in range(10))
     statements = [
         (
             "INSERT INTO whatsapp_accounts (id, tenant_id, waba_id, status, health) "
@@ -229,7 +258,37 @@ async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
         ),
         (
             "INSERT INTO messages (id, tenant_id, conversation_id, direction, sender_type, type, status) "
-            "VALUES (gen_random_uuid(), :t, :conv, 'inbound', 'contact', 'text', 'received')",
+            "VALUES (:msg, :t, :conv, 'inbound', 'contact', 'text', 'received')",
+            {},
+        ),
+        (
+            "INSERT INTO conversation_notes (id, tenant_id, conversation_id, body) "
+            "VALUES (gen_random_uuid(), :t, :conv, 'VIP, offer the discount')",
+            {},
+        ),
+        (
+            "INSERT INTO human_handover_sessions (id, tenant_id, conversation_id, started_by, reason) "
+            "VALUES (gen_random_uuid(), :t, :conv, 'ai', 'needs_human')",
+            {},
+        ),
+        (
+            "INSERT INTO conversation_summaries (id, tenant_id, conversation_id, status, summary, message_count) "
+            "VALUES (gen_random_uuid(), :t, :conv, 'ready', 'Wants a refund', 1)",
+            {},
+        ),
+        (
+            "INSERT INTO unanswered_questions (id, tenant_id, conversation_id, message_id, question, reason, status) "
+            "VALUES (gen_random_uuid(), :t, :conv, :msg, 'Refund?', 'needs_human', 'open')",
+            {},
+        ),
+        (
+            "INSERT INTO leads (id, tenant_id, contact_id, conversation_id, title, status, source) "
+            "VALUES (:lead, :t, :contact, :conv, 'Implants', 'new', 'whatsapp')",
+            {},
+        ),
+        (
+            "INSERT INTO lead_activities (id, tenant_id, lead_id, type, data) "
+            "VALUES (gen_random_uuid(), :t, :lead, 'created', '{}')",
             {},
         ),
         (
@@ -314,6 +373,8 @@ async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
                     "ver": ver,
                     "chunk": chunk,
                     "model": model,
+                    "msg": msg,
+                    "lead": lead,
                     **extra,
                 },
             )
@@ -405,6 +466,14 @@ async def test_audit_log_is_append_only_for_app_role(two_tenants) -> None:  # ty
     with pytest.raises(DBAPIError, match="permission denied"):
         async with app_transaction(tenant_a, user_a) as s:
             await s.execute(text("DELETE FROM audit_logs"))
+
+
+async def test_lead_history_is_append_only_for_app_role(two_tenants) -> None:  # type: ignore[no-untyped-def]
+    _, tenant_b, _, _ = two_tenants
+    for sql in ("UPDATE lead_activities SET type = 'forged'", "DELETE FROM lead_activities"):
+        with pytest.raises(DBAPIError, match="permission denied"):
+            async with app_transaction(tenant_b) as s:
+                await s.execute(text(sql))
 
 
 async def test_plan_catalogue_is_read_only_for_app_role(two_tenants) -> None:  # type: ignore[no-untyped-def]

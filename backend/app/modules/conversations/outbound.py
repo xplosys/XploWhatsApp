@@ -204,6 +204,8 @@ async def queue_message(session: AsyncSession, tenant_id: uuid.UUID, req: Outbou
         )
     )
     conversation.last_message_at = now
+    if req.sender_type in (SenderType.AGENT, SenderType.AI):
+        conversation.awaiting_reply = False
     await session.flush()
     return msg
 

@@ -31,3 +31,17 @@ def ai_auto_reply(conversation_id: str, tenant_id: str, trigger_message_id: str)
     from app.modules.ai.autoreply import reply
 
     return run_async(reply(uuid.UUID(conversation_id), uuid.UUID(tenant_id), uuid.UUID(trigger_message_id)))
+
+
+@celery_app.task(name="app.workers.tasks.messages.summarise_conversation")
+def summarise_conversation(conversation_id: str, tenant_id: str) -> str:
+    from app.modules.conversations.summary import summarise
+
+    return run_async(summarise(uuid.UUID(conversation_id), uuid.UUID(tenant_id)))
+
+
+@celery_app.task(name="app.workers.tasks.messages.sweep_summaries")
+def sweep_summaries() -> int:
+    from app.modules.conversations.summary import sweep
+
+    return run_async(sweep())

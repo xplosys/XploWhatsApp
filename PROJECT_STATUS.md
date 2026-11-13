@@ -1,7 +1,7 @@
 # XploWhatsApp — project status
 
 **Last updated:** 2026-11-13
-**Current phase:** Phase 4 complete, awaiting approval to start Phase 5 (conversation management)
+**Current phase:** Phase 5 complete, awaiting approval to start Phase 6 (customer dashboard)
 
 ## Phase tracker
 
@@ -11,13 +11,49 @@
 | 1. Foundation | Done (PR #1) | See Phase 1 report |
 | 2. Meta WhatsApp integration | Done (PR #2) | See Phase 2 report. Going live needs Meta App Review and Tech Provider approval |
 | 3. AI provider orchestration | Done (PR #3) | See Phase 3 report and docs/AI_PROVIDERS.md |
-| 4. RAG knowledge engine | Done, awaiting review | See Phase 4 report and docs/KNOWLEDGE.md |
-| 5. Conversation management | Not started | |
+| 4. RAG knowledge engine | Done (PR #4) | See Phase 4 report and docs/KNOWLEDGE.md |
+| 5. Conversation management | Done, awaiting review | See Phase 5 report and docs/CONVERSATIONS.md |
 | 6. Customer dashboard | Not started | |
 | 7. Billing and subscriptions | Not started | |
 | 8. Security hardening | Not started | |
 | 9. Monitoring and deployment | Not started | |
 | 10. Production testing and release | Not started | |
+
+## Phase 5 report
+
+### What is complete
+
+- **Data model (migration 0005):** `conversation_notes`, `human_handover_sessions` (one open session per conversation), `conversation_summaries`, `unanswered_questions`, `leads` and `lead_activities` (append-only for the app role). Conversations gain assignment with time, `awaiting_reply` and `closed_at`; contacts gain tags (GIN index). Trigram indexes for search. Forced RLS on all six new tables. The migration backfills existing data (handover sessions for conversations already handed over, waiting state, close times).
+- **Inbox API:** tabs (open, mine, unassigned, needs a person, waiting for reply, closed) with counts; search by contact name, phone, username or message text; filters by tag, assignee and number; one conversation by ID.
+- **Workflow:** assign and unassign with role rules, take over from the assistant and hand back (the old AI switch uses the same path), close and reopen (a customer message reopens), handover history, internal notes (author edits; author or supervisor deletes). Assignment, takeover, release, close and note deletion are audited. Removing a member returns their conversations, open takeovers and leads to the queue.
+- **Assistant integration:** every AI handover opens a session, records the customer's question and the passages found, and (setting on by default) queues a summary. A summary can also be requested; it uses the assistant's model chain, is recorded as usage with purpose `summary`, and a lost job is re-sent by a sweeper.
+- **Contacts API:** list with search, tag and consent filters; detail with conversations and leads; edit name, language and tags; tag list with counts.
+- **Unanswered questions:** listed on the Knowledge page; owners and admins resolve, dismiss or reopen them.
+- **Leads:** create from a conversation or a contact, status pipeline, value with currency (default from the business's country), owner (same rules as assignment), notes, full history, filters and search, pipeline summary; delete for supervisors and above.
+- **Frontend:** the Conversations page has tabs with counts, search and tag filter, assignee and "Assigned to" info, take over, hand back, close, and a side panel with the AI summary, notes, contact details and tags, consent, leads and handover history. It works on phones (the list and the conversation take turns). New Contacts and Leads pages, an unanswered-questions card on the Knowledge page, and the summary setting on the AI assistant page.
+
+### Tests
+
+- Backend: 231 tests, all passing (22 new). Integration tests cover inbox views, counts and search (including escaped wildcards), awaiting reply and reopen, reactions, assignment rules for agents and supervisors, member removal, takeover and release with history, the AI handover recording the question and writing a summary (prompt shape and usage checked), summary failures and the setting, failed models handing over once, notes permissions, contacts and tags, the lead pipeline with history and permissions, cross-tenant access, and the summary sweeper. RLS tests cover the six new tables, including append-only lead history.
+- `ruff`, `mypy --strict`, `eslint`, `tsc` and `next build`: clean. Migration up, down and up again ran clean on a fresh database and on the Phase 4 data, and `alembic check` finds no drift.
+- Browser walkthrough against the running stack with fake Meta and AI APIs (screenshots in the project files under `phase5/`): an AI handover with its summary, take over, add a note, edit name and tags, create a lead, assign to an agent, reply and close, search by message text, move the lead to qualified with a note, filter contacts by tag, resolve the unanswered question, and the agent's view on a phone.
+
+### Fixed along the way
+
+- On phones the inbox was wider than the screen and the open conversation sat below the whole list; the columns no longer stretch to their content and the list and conversation now take turns.
+- Removing a member left their name on an open takeover ("handled by"); it is now cleared with their assignments.
+
+### Not verified here
+
+- Summaries from real Gemini, OpenAI and DeepSeek models (fakes built from the documented API shapes). Check one with a real key before launch.
+- Search speed at large volumes; the trigram indexes are in place but have only been tried on small data.
+
+### Known limitations of Phase 5
+
+- The inbox refreshes on a timer (15 seconds for the list, 5 for the open conversation); live updates over a socket are not built yet.
+- No bulk actions (assign or close several at once), saved views or canned replies.
+- Leads have no custom fields, stages per business or reminders; the pipeline stages are fixed.
+- Contacts cannot be merged or imported, and there is no CSV export yet.
 
 ## Phase 4 report
 

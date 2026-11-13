@@ -32,19 +32,20 @@ from app.modules.ai.orchestrator import ChainStep, Outcome
 from app.modules.ai.prompt import Passage, fit_passages, trim_history
 from app.modules.ai.providers.base import Turn
 from app.modules.billing.service import effective_plan
-from app.modules.conversations import outbound
+from app.modules.conversations import inbox, outbound
 from app.modules.conversations.models import (
     ConsentStatus,
     Contact,
     Conversation,
     Direction,
+    HandoverStarter,
     Message,
     SenderType,
 )
 from app.modules.knowledge import retrieval
 from app.modules.policy.engine import service_window_open
 from app.modules.tenants.models import Tenant
-from app.workers.dispatch import AI_AUTO_REPLY, dispatch
+from app.workers.dispatch import AI_AUTO_REPLY, CONVERSATION_SUMMARY, dispatch
 
 log = structlog.get_logger(__name__)
 
@@ -143,9 +144,35 @@ class Prepared:
     extra_calls: list[CallRecord] = field(default_factory=list)
 
 
-def _hand_over(conversation: Conversation) -> None:
-    conversation.ai_enabled = False
-    conversation.needs_human = True
+async def _hand_over(
+    session: AsyncSession,
+    conversation: Conversation,
+    *,
+    trigger_id: uuid.UUID,
+    reason: str,
+    prepared: Prepared,
+    retrieval_hits: int | None,
+) -> None:
+    """Stop automatic replies, keep a record of the question the assistant could not
+    answer, and (if the business wants it) write a summary for whoever picks it up."""
+    await inbox.start_handover(session, conversation, started_by=HandoverStarter.AI, reason=reason)
+    trigger = await session.get(Message, trigger_id)
+    question = (trigger.body or "").strip() if trigger is not None else ""
+    if not question:
+        question = next((t.text for t in reversed(prepared.turns) if t.role == "user"), "")
+    if question:
+        await inbox.record_unanswered(
+            session,
+            conversation,
+            message_id=trigger_id,
+            question=question,
+            reason=reason,
+            retrieval_hits=retrieval_hits,
+        )
+    if prepared.config.summary_on_handover:
+        await inbox.request_summary(session, conversation, None)
+        conversation_id, tenant_id = conversation.id, conversation.tenant_id
+        run_after_commit(session, lambda: dispatch(CONVERSATION_SUMMARY, conversation_id, tenant_id))
 
 
 async def _prepare(
@@ -252,15 +279,34 @@ async def _deliver(
         )
     except AppError as exc:
         log.warning("ai_reply_blocked", conversation_id=str(conversation_id), code=exc.code)
-        _hand_over(conversation)
+        await _hand_over(
+            session,
+            conversation,
+            trigger_id=trigger_id,
+            reason=f"blocked:{exc.code}",
+            prepared=prepared,
+            retrieval_hits=_hits(outcome),
+        )
         return f"blocked:{exc.code}"
     await catalogue.record_reply(session, tenant_id, conversation_id)
     if outcome.kind == "handover":
-        _hand_over(conversation)
+        await _hand_over(
+            session,
+            conversation,
+            trigger_id=trigger_id,
+            reason=outcome.reason,
+            prepared=prepared,
+            retrieval_hits=_hits(outcome),
+        )
     job = await outbound.outbox_job_for(session, msg.id)
     if job is not None:
         run_after_commit(session, lambda: outbound.dispatch_job(job))
     return "handover" if outcome.kind == "handover" else "replied"
+
+
+def _hits(outcome: Outcome) -> int | None:
+    hits = (outcome.retrieval or {}).get("hits")
+    return hits if isinstance(hits, int) else None
 
 
 async def reply(conversation_id: uuid.UUID, tenant_id: uuid.UUID, trigger_id: uuid.UUID) -> str:

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Alert } from "@/components/ui/Alert";
@@ -18,6 +19,8 @@ import type {
   KnowledgeSearch,
   KnowledgeSettings,
   KnowledgeVersion,
+  UnansweredPage,
+  UnansweredQuestion,
   VersionStatus,
 } from "@/lib/api/types";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -216,8 +219,114 @@ export default function KnowledgePage() {
         )}
       </Card>
 
+      <UnansweredCard manage={manage} />
+
       {manage && settings.embedding_model && <SearchCard minScore={Number(settings.min_score)} />}
     </div>
+  );
+}
+
+const UNANSWERED_REASON: Record<string, string> = {
+  needs_human: "Asked for a person",
+  all_failed: "No checked answer",
+};
+
+function UnansweredCard({ manage }: { manage: boolean }) {
+  const [status, setStatus] = useState<"open" | "resolved" | "dismissed">("open");
+  const [page, setPage] = useState<UnansweredPage | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(
+    () =>
+      api<UnansweredPage>(`/knowledge/unanswered?status=${status}&limit=50`).then(
+        (p) => {
+          setPage(p);
+          setError(null);
+        },
+        (err) => setError(errorMessage(err)),
+      ),
+    [status],
+  );
+
+  useEffect(() => {
+    void Promise.resolve().then(load);
+  }, [load]);
+
+  async function mark(id: string, next: "open" | "resolved" | "dismissed") {
+    setBusy(id);
+    setError(null);
+    try {
+      await api<UnansweredQuestion>(`/knowledge/unanswered/${id}`, { method: "PATCH", body: { status: next } });
+      await load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Card
+      title={`Questions the assistant couldn't answer${page && page.open ? ` (${page.open} open)` : ""}`}
+      description="When the assistant hands a customer to your team, their question is kept here. Add the answer to a document or note, then mark it resolved."
+      actions={
+        <select
+          aria-label="Show questions"
+          value={status}
+          onChange={(e) => setStatus(e.target.value as typeof status)}
+          className="rounded-control border-[1.5px] border-line bg-surface px-2 py-1.5 text-sm focus:border-ring focus:outline-none dark:bg-surface-muted"
+        >
+          <option value="open">Open</option>
+          <option value="resolved">Resolved</option>
+          <option value="dismissed">Dismissed</option>
+        </select>
+      }
+    >
+      {error && <Alert tone="error">{error}</Alert>}
+      {page && page.items.length === 0 ? (
+        <EmptyState
+          title={status === "open" ? "Nothing waiting" : `No ${status} questions`}
+          description={status === "open" ? "Questions appear here when the assistant hands a conversation to your team." : undefined}
+        />
+      ) : (
+        <ul className="divide-y divide-line">
+          {page?.items.map((q) => (
+            <li key={q.id} className="flex flex-wrap items-start justify-between gap-3 py-3">
+              <div className="min-w-0 flex-1">
+                <p className="whitespace-pre-wrap break-words text-sm">{q.question}</p>
+                <p className="mt-1 text-xs text-muted">
+                  {q.contact_name ?? "Customer"} · {formatDateTime(q.created_at)} ·{" "}
+                  {q.reason.startsWith("blocked:") ? "Reply blocked" : (UNANSWERED_REASON[q.reason] ?? q.reason)}
+                  {q.retrieval_hits === 0 && " · no matching passages found"}
+                  {q.resolved_by && ` · ${q.status} by ${q.resolved_by.name}`}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Link href={`/conversations?c=${q.conversation_id}`} className="text-xs font-semibold text-brand hover:underline">
+                  Conversation
+                </Link>
+                {manage &&
+                  (q.status === "open" ? (
+                    <>
+                      <Button variant="secondary" className="!px-3 !py-1 text-xs" loading={busy === q.id} onClick={() => mark(q.id, "resolved")}>
+                        Resolved
+                      </Button>
+                      <Button variant="ghost" className="!px-3 !py-1 text-xs" disabled={busy === q.id} onClick={() => mark(q.id, "dismissed")}>
+                        Dismiss
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="ghost" className="!px-3 !py-1 text-xs" loading={busy === q.id} onClick={() => mark(q.id, "open")}>
+                      Reopen
+                    </Button>
+                  ))}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 

@@ -42,6 +42,9 @@ class AssistantConfig(BaseModel):
         max_length=1000,
     )
     max_reply_chars: int = Field(default=1000, ge=100, le=WHATSAPP_TEXT_LIMIT)
+    summary_on_handover: bool = Field(
+        default=True, description="Write a short summary for staff when the assistant hands over."
+    )
     primary: ModelChoice
     fallbacks: list[ModelChoice] = Field(default_factory=list, max_length=3)
 

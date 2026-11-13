@@ -15,6 +15,8 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 const NAV = [
   { href: "/dashboard", label: "Overview" },
   { href: "/conversations", label: "Conversations", permission: "conversations:read" },
+  { href: "/contacts", label: "Contacts", permission: "conversations:read" },
+  { href: "/leads", label: "Leads", permission: "leads:manage" },
   { href: "/whatsapp", label: "WhatsApp", permission: "whatsapp:read" },
   { href: "/ai", label: "AI assistant", permission: "ai:configure" },
   { href: "/knowledge", label: "Knowledge base", permission: "knowledge:read" },
@@ -126,7 +128,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </aside>
-      <main className="flex-1 px-4 py-8 md:px-10">
+      <main className="min-w-0 flex-1 px-4 py-8 md:px-10">
         <div className="mx-auto max-w-5xl space-y-6">
           {!me.user.email_verified && <VerifyBanner />}
           {!me.active_tenant_id && !me.user.is_super_admin && (
