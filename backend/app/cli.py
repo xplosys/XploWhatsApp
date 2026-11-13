@@ -108,6 +108,18 @@ def create_super_admin(email: str, full_name: str = "Platform Admin") -> None:
     typer.echo(f"Super Admin ready: {email}. Sign in and enable two-factor authentication.")
 
 
+@cli.command("ensure-bucket")
+def ensure_bucket_command() -> None:
+    """Create the private knowledge bucket if it doesn't exist (needs S3_* settings)."""
+    from app.modules.storage import s3
+
+    if not s3.storage_configured():
+        typer.echo("File storage is not configured (S3_*); skipping.")
+        return
+    created = asyncio.run(s3.ensure_bucket())
+    typer.echo(f"Bucket {get_settings().s3_bucket} {'created' if created else 'already exists'}.")
+
+
 @cli.command("generate-secrets")
 def generate_secrets() -> None:
     """Print fresh values for JWT_PRIVATE_KEY_PEM and ENCRYPTION_KEYS (for .env)."""

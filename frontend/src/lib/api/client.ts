@@ -87,6 +87,22 @@ export async function api<T>(path: string, options: Options = {}, retry = true):
   return (await res.json()) as T;
 }
 
+/** Multipart upload (the browser sets the boundary). Retries once after a token refresh. */
+export async function apiUpload<T>(path: string, form: FormData, retry = true): Promise<T> {
+  const res = await fetch(`/api/v1${path}`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...CSRF_HEADER },
+    body: form,
+  });
+  if (res.status === 401 && retry) {
+    const refreshed = await refreshSession();
+    if (refreshed) return apiUpload<T>(path, form, false);
+  }
+  if (!res.ok) throw await parseError(res);
+  return (await res.json()) as T;
+}
+
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
   return "We couldn't reach the server. Check your connection and try again.";

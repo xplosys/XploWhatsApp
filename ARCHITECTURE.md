@@ -57,7 +57,7 @@ These are not silent simplifications. Each is a real constraint, with the compli
 5. **Meta pricing is per message (since 1 July 2025), not per conversation.** Categories: marketing, utility, authentication, service. Service replies inside the customer-service window are free, as are utility templates sent inside the window. Rates vary by country and change, so they live in a versioned rate table with effective dates, never in code.
 6. **Celery is not asyncio-native.** The brief asks for both Celery and async I/O. *Decision:* each Celery worker process owns one long-lived asyncio event loop and async engine; tasks are thin sync wrappers that run coroutines on that loop. Business logic is shared async code used by both API and workers.
 7. **Malware scanning needs a scanner.** The brief forbids unnecessary technologies but requires malware scanning. *Decision:* add a ClamAV (`clamd`) container. This is the one addition beyond the brief's list, and it is required by section 16.
-8. **MinIO's community edition is in maintenance mode** (the project stopped publishing community binaries/images and removed the admin console in 2025). *Decision:* code only against the S3 API (`aioboto3`). Use MinIO (pinned image) for local development. For production, choose between a managed S3-compatible service (AWS S3, Cloudflare R2, Backblaze B2) or a maintained self-hosted alternative. This is an open decision for Phase 9; please verify MinIO's status at that time.
+8. **MinIO's community edition is in maintenance mode** (the project stopped publishing community binaries/images and removed the admin console in 2025). *Decision:* code only against the S3 API (`aioboto3`). For local development and tests we use SeaweedFS (pinned `chrislusf/seaweedfs:4.50`, S3 gateway), because MinIO's community images can no longer be pulled (confirmed in Phase 4). For production, choose between a managed S3-compatible service (AWS S3, Cloudflare R2, Backblaze B2) or a maintained self-hosted alternative. This is an open decision for Phase 9.
 9. **Stripe in India.** Stripe's India business is restricted for new accounts. *Decision:* Razorpay (Subscriptions + e-mandate) for Indian customers. Stripe for UK/US customers, which will likely need a non-Indian billing entity. The billing module uses a `PaymentGateway` interface so either can be added without touching subscription logic.
 10. **Healthcare data.** Hospitals are a target segment. WhatsApp does not offer a HIPAA BAA, so US healthcare PHI cannot be supported. For India, the DPDP Act 2023 and DPDP Rules 2025 apply (consent, purpose limitation, breach notification, retention). For the UK, UK GDPR. *Decision:* treat all message content as personal data, offer per-tenant retention settings, data export and deletion, and mark healthcare as "non-clinical use only" (appointments, timings, FAQs) in terms of service.
 11. **Scanned PDFs / images in documents** need OCR. Not GPU-dependent, but heavy. *Decision:* text-layer extraction in Phase 4; OCR (Tesseract) as an optional, flagged feature later.
@@ -98,7 +98,7 @@ These are not silent simplifications. Each is a real constraint, with the compli
 | R10 | Cost blow-up on platform-managed AI keys | Med | High | Per-tenant quotas, hard caps, pre-flight token estimate, usage alerts |
 | R11 | Single VPS failure | Med | High | Encrypted off-site backups, tested restore runbook, documented RTO/RPO, path to managed Postgres |
 | R12 | Regulatory (DPDP, UK GDPR, healthcare) | Med | High | Retention controls, DSR export/delete, DPA template, healthcare usage limits |
-| R13 | MinIO community edition stagnation | Med | Low | S3 API only; swap provider by config |
+| R13 | MinIO community edition stagnation (materialised: images unavailable) | Med | Low | S3 API only; SeaweedFS in dev and tests; production provider by config |
 | R14 | pgvector filtered-search recall with per-tenant filter | Med | Med | pgvector ≥ 0.8 iterative HNSW scans, tenant-scoped query, recall tests |
 
 ---
@@ -230,18 +230,23 @@ The browser never sees the token. The code is exchanged immediately because of i
 
 ```mermaid
 flowchart TD
-  UP[POST /knowledge/upload] --> VAL[Validate: size, extension, magic bytes, plan quota]
-  VAL --> ST[Store in object storage, private bucket, tenant prefix]
-  ST --> DOC[knowledge_documents status=uploaded]
-  DOC --> T1[[knowledge worker]]
-  T1 --> AV[ClamAV scan] -->|infected| QUAR[status=rejected, quarantine]
-  AV -->|clean| EX[Extract: pypdf / python-docx / openpyxl / csv / URL fetch with SSRF guard]
-  EX --> CL[Clean + normalise, language detect]
-  CL --> CH[Chunk: heading-aware, ~500-800 tokens, overlap]
-  CH --> EM[Embed in batches, model + version recorded]
-  EM --> VEC[(knowledge_chunks vector 1536, HNSW)]
-  VEC --> READY[status=ready, version n active]
+  UP[POST /knowledge/documents/upload, /url or /text] --> VAL[Validate: body size, magic bytes match extension, zip limits, no macros, plan quota]
+  VAL --> ST[Store in private bucket under tenants/tenant/documents/doc/]
+  ST --> V[knowledge_document_versions status=queued]
+  V --> T1[[knowledge worker: claim, status=processing]]
+  T1 --> F{URL?}
+  F -->|yes| WF[Fetch with SSRF guard: public IPs only, pinned address, manual redirects, type and size caps]
+  F -->|no| GET[Read object]
+  WF --> AV
+  GET --> AV[ClamAV INSTREAM scan] -->|infected| REJ[status=rejected, object deleted]
+  AV -->|clean| EX[Extract sections: pypdf / python-docx / openpyxl / csv / text / markdown / HTML]
+  EX --> CH[Chunk: heading-aware, about 600 tokens, 80 overlap, page and sheet kept]
+  CH --> EM[Embed in batches with the active model, and the pending one during a switch]
+  EM --> STORE[One transaction: chunks + knowledge_chunk_embeddings vector 1536, HNSW]
+  STORE --> READY[status=ready; previous version replaced, its chunks removed]
 ```
+
+No database transaction is open while the file is fetched, scanned, read or embedded. If the business changed its embedding model meanwhile, the store step requeues the version instead of saving vectors from the wrong model.
 
 ### 3.6 AI orchestration design
 
@@ -321,7 +326,11 @@ erDiagram
   webhook_events ||--o{ webhook_outbox : produces
   messages ||--o{ webhook_outbox : sent_via
   tenants ||--o{ knowledge_documents : uploads
-  knowledge_documents ||--o{ knowledge_chunks : split_into
+  knowledge_documents ||--o{ knowledge_document_versions : has
+  knowledge_document_versions ||--o{ knowledge_chunks : split_into
+  knowledge_chunks ||--o{ knowledge_chunk_embeddings : embedded_as
+  ai_models ||--o{ knowledge_chunk_embeddings : by_model
+  tenants ||--o| knowledge_settings : configures
   contacts ||--o{ leads : becomes
   leads ||--o{ lead_activities : logs
   subscription_plans ||--o{ subscriptions : priced_by
@@ -536,32 +545,56 @@ erDiagram
     int attempts
     timestamptz next_attempt_at
   }
+  knowledge_settings {
+    uuid id PK
+    uuid tenant_id FK
+    uuid embedding_model_pk FK
+    uuid pending_embedding_model_pk FK
+    text reindex_error
+    numeric min_score
+    int top_k
+  }
   knowledge_documents {
     uuid id PK
     uuid tenant_id FK
     string title
     string source_type
-    string source_uri
-    string object_key
-    string sha256
-    string mime_type
-    bigint size_bytes
+    string source_url
+    int active_version
+    int latest_version
+  }
+  knowledge_document_versions {
+    uuid id PK
+    uuid tenant_id FK
+    uuid document_id FK
     int version
     string status
-    text error
-    uuid embedding_model_id
+    string object_key
+    string sha256
+    string file_type
+    bigint size_bytes
+    string scan_result
+    string error_code
+    int attempts
+    int chunk_count
   }
   knowledge_chunks {
     uuid id PK
     uuid tenant_id FK
     uuid document_id FK
-    int document_version
+    uuid version_id FK
     int ordinal
+    string heading
     text content
-    jsonb metadata
+    jsonb meta
+    int token_estimate
+  }
+  knowledge_chunk_embeddings {
+    uuid id PK
+    uuid tenant_id FK
+    uuid chunk_id FK
+    uuid model_pk FK
     vector embedding
-    uuid embedding_model_id
-    int token_count
   }
   message_templates {
     uuid id PK
@@ -685,9 +718,9 @@ erDiagram
 - `webhook_events (dedup_key)` unique. Dedup key is the Meta message ID for messages, and `wamid + status + timestamp` for statuses.
 - `webhook_outbox (status, next_attempt_at)` partial index where status in (`pending`, `retry`).
 - `whatsapp_numbers (phone_number_id)` unique globally (routing).
-- `knowledge_chunks` HNSW on `embedding vector_cosine_ops`, plus `(tenant_id, document_id)` btree. Searches run with `hnsw.iterative_scan = relaxed_order` so tenant filtering keeps recall.
+- `knowledge_chunk_embeddings` HNSW on `embedding vector_cosine_ops`, unique `(chunk_id, model_pk)`, plus `(tenant_id, model_pk)` btree. Searches run with `hnsw.iterative_scan = relaxed_order` so tenant filtering keeps recall.
 - `usage_records (tenant_id, metric, occurred_at)`; monthly partitioning of `messages`, `usage_records`, `webhook_events`, `audit_logs` introduced when volume justifies (designed for, not done in Phase 1).
-- **Embedding dimension:** standardised at 1536 (OpenAI `text-embedding-3-small` natively; Gemini embeddings with `output_dimensionality=1536`). Changing the embedding model triggers a re-index; chunks carry `embedding_model_id`, and retrieval only compares vectors from the tenant's active model.
+- **Embedding dimension:** standardised at 1536 (OpenAI `text-embedding-3-small` natively; Gemini embeddings with `output_dimensionality=1536`). Changing the embedding model triggers a re-index; vectors live in `knowledge_chunk_embeddings` keyed by model, so the new model's vectors are added beside the old ones and the switch is one update (ADR 027). Retrieval only compares vectors from the tenant's active model.
 
 ---
 
@@ -842,10 +875,10 @@ Full detail, including the approval sequence and what can be built before approv
 | 005 | Celery tasks run async code on a per-process event loop | Accepted |
 | 006 | Envelope encryption with versioned KEKs from env | Accepted |
 | 007 | ES256 JWT access tokens, opaque rotating refresh tokens with reuse detection | Accepted |
-| 008 | Embeddings fixed at 1536 dimensions; OpenAI or Gemini as embedding providers | Proposed |
+| 008 | Embeddings fixed at 1536 dimensions (OpenAI `dimensions`, Gemini `outputDimensionality`); OpenAI or Gemini as embedding providers; a vector of another size is refused | Accepted (Phase 4) |
 | 009 | Launch as Meta Tech Provider; customers pay Meta directly | Proposed |
-| 010 | S3 API only for storage; MinIO for dev, production provider decided in Phase 9 | Proposed |
-| 011 | ClamAV container for upload scanning | Proposed |
+| 010 | S3 API only for storage (`aioboto3`, path-style). SeaweedFS for dev and tests because MinIO community images are gone; production provider decided in Phase 9. Files are never served by the API: downloads are 5-minute presigned links forced to `attachment` and `application/octet-stream` | Accepted (Phase 4) |
+| 011 | ClamAV (clamd INSTREAM over TCP) scans every file and fetched page in the worker before it is parsed; required outside development; a scanner outage fails the version (retryable) rather than skipping the scan | Accepted (Phase 4) |
 | 012 | Razorpay for India, Stripe for UK/US behind a `PaymentGateway` interface | Proposed |
 | 013 | Assistants are business-scoped to comply with Meta's general-purpose chatbot ban | Proposed |
 | 014 | Python deps via `uv`, frontend via `pnpm` | Accepted |
@@ -860,5 +893,10 @@ Full detail, including the approval sequence and what can be built before approv
 | 023 | Replies are structured JSON (`reply`, `needs_human`, `out_of_scope`) and pass a validator before sending: shape, length, secrets, prompt leakage, and grounding (prices, percentages, times, phone numbers, emails and links must appear in the business information or the customer's words). A failed answer tries the next model; if none passes, the handover message is sent | Accepted (Phase 3) |
 | 024 | A business uses its own API key (envelope-encrypted, bound to tenant and provider) or, if its plan's `platform_ai_keys` limit allows, XploSys's key from the environment | Accepted (Phase 3) |
 | 025 | Handover turns AI off for that conversation and marks it `needs_human` until a person turns AI back on; assistant settings are immutable versions so a change can be rolled back | Accepted (Phase 3) |
+| 026 | Each knowledge change is a new document version; answers use the active version until a newer one is ready, then the old version's chunks are deleted and its file kept for download until deleted | Accepted (Phase 4) |
+| 027 | Chunks and their vectors are separate tables keyed by embedding model, so changing the model re-embeds in batches beside the old vectors and switches in one update; answers keep working during the switch | Accepted (Phase 4) |
+| 028 | Web pages are fetched without trusting DNS twice: every hop is resolved, every address must be public, the request goes to the checked IP with the original Host and TLS name, redirects are followed by hand (max 3), ports 80 and 443 only, no proxy settings from the environment | Accepted (Phase 4) |
+| 029 | Uploads are checked by content, not by name: magic bytes must match the extension, Office files are opened as zips with entry, size and ratio limits, macro-enabled and legacy binary Office files are refused, text must be UTF-8 or UTF-16 with a byte order mark; the request body is capped before it is read | Accepted (Phase 4) |
+| 030 | Retrieval embeds the customer's latest message and their last three messages together in one call and keeps each passage's best score above the business's threshold; retrieved passages go into the prompt as reference material (not instructions) and count as grounding for the validator, and their IDs and scores are kept in the message's provenance | Accepted (Phase 4) |
 
 Each will be written up under `docs/adr/` as it is implemented.

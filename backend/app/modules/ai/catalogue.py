@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.ai.models import AIModel, AIModelPrice, UsageRecord
+from app.modules.ai.models import AIModel, AIModelPrice, ModelKind, UsageRecord
 from app.modules.ai.providers.base import ModelInfo, Usage
 
 MILLION = Decimal(1_000_000)
@@ -25,8 +25,14 @@ async def find_model(session: AsyncSession, provider: str, model_id: str) -> AIM
     ).scalar_one_or_none()
 
 
-async def active_models(session: AsyncSession, provider: str | None = None) -> list[AIModel]:
-    stmt = select(AIModel).where(AIModel.active.is_(True)).order_by(AIModel.provider, AIModel.model_id)
+async def active_models(
+    session: AsyncSession, provider: str | None = None, kind: str = ModelKind.CHAT
+) -> list[AIModel]:
+    stmt = (
+        select(AIModel)
+        .where(AIModel.active.is_(True), AIModel.kind == kind)
+        .order_by(AIModel.provider, AIModel.model_id)
+    )
     if provider:
         stmt = stmt.where(AIModel.provider == provider)
     return list((await session.execute(stmt)).scalars())
@@ -48,6 +54,7 @@ async def upsert_models(session: AsyncSession, provider: str, models: list[Model
                 AIModel(
                     provider=provider,
                     model_id=info.model_id,
+                    kind=info.kind,
                     display_name=info.display_name,
                     context_window=info.context_window,
                     max_output_tokens=info.max_output_tokens,

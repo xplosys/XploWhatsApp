@@ -2,11 +2,12 @@
 
 AI-powered WhatsApp customer engagement and automation platform by XploSys. Multi-tenant SaaS built on the official Meta WhatsApp Cloud API.
 
-**Status:** Phases 1 to 3 (foundation, WhatsApp, AI assistant) complete. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+**Status:** Phases 1 to 4 (foundation, WhatsApp, AI assistant, knowledge base) complete. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): system design, diagrams, data model, security decisions
 - [docs/META_INTEGRATION.md](docs/META_INTEGRATION.md): Meta setup, approvals and onboarding sequence
 - [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md): AI providers, keys, model catalogue and how replies are checked
+- [docs/KNOWLEDGE.md](docs/KNOWLEDGE.md): knowledge base uploads, scanning, embeddings, retrieval and settings
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md): phased plan
 
 Stack: Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Celery, PostgreSQL 17 + pgvector, Redis, Next.js 16 + TypeScript + Tailwind CSS 4, Docker Compose.
@@ -25,8 +26,11 @@ docker compose up -d --build
 | App | http://localhost:3000 |
 | API docs (development only) | http://localhost:8000/docs |
 | Mailpit (verification and invite emails) | http://localhost:8025 |
+| SeaweedFS S3 gateway (knowledge files; download links point here) | http://localhost:8333 |
 
-The one-shot `migrate` service creates the database roles, runs migrations and seeds the plan catalogue on every start (idempotent).
+The one-shot `migrate` service creates the database roles, runs migrations, seeds the plan catalogue and creates the private file bucket on every start (idempotent).
+
+For the knowledge base, set `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` in `.env` (any long random values in development). To scan uploads for viruses locally, set `CLAMAV_HOST=clamav` and start with `docker compose --profile scan up -d` (ClamAV needs about 3 to 4 GB of memory). As Super Admin, activate an embedding model so businesses can choose it (docs/KNOWLEDGE.md).
 
 To connect WhatsApp, fill in the `META_*` lines in `.env` (see docs/META_INTEGRATION.md §7 for where each value comes from and how to set up the webhook). Without them the WhatsApp page lists what is missing.
 

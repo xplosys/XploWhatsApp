@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -18,7 +19,8 @@ from app.core.config import get_settings
 from app.modules.ai import catalogue, registry
 from app.modules.ai.assistant import AssistantConfig
 from app.modules.ai.catalogue import CallRecord
-from app.modules.ai.prompt import REPLY_SCHEMA, grounding_text, system_prompt
+from app.modules.ai.models import ModelKind
+from app.modules.ai.prompt import REPLY_SCHEMA, Passage, grounding_text, system_prompt
 from app.modules.ai.providers.base import GenerateRequest, ProviderError, Turn, Usage
 from app.modules.ai.validator import validate
 
@@ -51,9 +53,13 @@ class Outcome:
     model: str | None = None
     out_of_scope: bool = False
     attempts: list[Attempt] = field(default_factory=list)
+    sources: list[dict[str, object]] = field(default_factory=list)
+    retrieval: dict[str, object] | None = None
 
     def provenance(self) -> dict[str, object]:
         return {
+            "sources": self.sources,
+            "retrieval": self.retrieval,
             "provider": self.provider,
             "model": self.model,
             "reason": self.reason,
@@ -73,7 +79,7 @@ async def prepare_chain(
     for choice in config.chain:
         provider = str(choice.provider)
         model = await catalogue.find_model(session, provider, choice.model)
-        if model is None or not model.active:
+        if model is None or not model.active or model.kind != ModelKind.CHAT:
             steps.append(ChainStep(provider, choice.model, None, "model_unavailable"))
             continue
         key = await registry.resolve_key(session, tenant_id, configs.get(provider))
@@ -88,16 +94,21 @@ async def run(
     business_name: str,
     default_language: str,
     turns: list[Turn],
+    knowledge: Sequence[Passage] = (),
+    retrieval: dict[str, object] | None = None,
 ) -> Outcome:
     settings = get_settings()
     request_base = GenerateRequest(
         model="",
-        system=system_prompt(config, business_name=business_name, default_language=default_language),
+        system=system_prompt(
+            config, business_name=business_name, default_language=default_language, knowledge=knowledge
+        ),
         turns=turns,
         max_output_tokens=settings.ai_max_output_tokens,
         response_schema=REPLY_SCHEMA,
     )
-    grounding = grounding_text(config, turns)
+    grounding = grounding_text(config, turns, knowledge)
+    sources = [p.source() for p in knowledge]
     attempts: list[Attempt] = []
     for step in steps:
         if step.key is None:
@@ -151,11 +162,28 @@ async def run(
                     step.provider,
                     step.model,
                     attempts=attempts,
+                    sources=sources,
+                    retrieval=retrieval,
                 )
             return Outcome(
-                "reply", verdict.text, "answered", step.provider, step.model, verdict.out_of_scope, attempts
+                "reply",
+                verdict.text,
+                "answered",
+                step.provider,
+                step.model,
+                verdict.out_of_scope,
+                attempts,
+                sources,
+                retrieval,
             )
-    return Outcome("handover", config.handover_message, "all_failed", attempts=attempts)
+    return Outcome(
+        "handover",
+        config.handover_message,
+        "all_failed",
+        attempts=attempts,
+        sources=sources,
+        retrieval=retrieval,
+    )
 
 
 def call_records(

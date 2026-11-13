@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.security import crypto
 from app.modules.ai.models import AIProviderConfig, KeySource, ProviderKey
-from app.modules.ai.providers.base import AIProvider
+from app.modules.ai.providers.base import AIProvider, EmbeddingProvider
 from app.modules.ai.providers.deepseek import DeepSeekProvider
 from app.modules.ai.providers.gemini import GeminiProvider
 from app.modules.ai.providers.openai import OpenAIProvider
@@ -34,8 +34,19 @@ PROVIDER_LABELS = {
 }
 
 
+# DeepSeek has no embeddings API.
+EMBEDDING_ADAPTERS: dict[str, type[OpenAIProvider] | type[GeminiProvider]] = {
+    ProviderKey.OPENAI: OpenAIProvider,
+    ProviderKey.GEMINI: GeminiProvider,
+}
+
+
 def build(provider: str, api_key: str) -> AIProvider:
     return ADAPTERS[provider](api_key)
+
+
+def build_embedder(provider: str, api_key: str) -> EmbeddingProvider:
+    return EMBEDDING_ADAPTERS[provider](api_key)
 
 
 def platform_key(provider: str) -> str | None:

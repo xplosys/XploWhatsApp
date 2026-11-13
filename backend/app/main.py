@@ -13,7 +13,7 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
-from app.core.middleware import RequestContextMiddleware
+from app.core.middleware import RequestContextMiddleware, UploadSizeLimitMiddleware
 from app.core.redis import close_redis
 from app.db.session import dispose_engines
 
@@ -45,6 +45,10 @@ def create_app() -> FastAPI:
             allow_headers=["Authorization", "Content-Type", "X-Requested-With", "X-Request-ID"],
             max_age=600,
         )
+    # Largest knowledge file plus room for the form's other fields.
+    app.add_middleware(
+        UploadSizeLimitMiddleware, max_bytes=(settings.knowledge_max_file_mb + 1) * 1024 * 1024
+    )
     app.add_middleware(RequestContextMiddleware)
     register_exception_handlers(app)
     app.include_router(health_router)

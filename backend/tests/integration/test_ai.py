@@ -537,6 +537,8 @@ async def test_preview_runs_draft_settings_without_sending(clinic: Actor, ai: Fa
         "model": "deepseek-test-chat",
         "out_of_scope": True,
         "attempts": [],
+        "sources": [],
+        "retrieval": {"hits": 0, "status": "not_configured"},
     }
     assert meta.sent == []
     [record] = await usage(clinic.tenant_id)
@@ -574,12 +576,18 @@ async def test_super_admin_manages_catalogue_and_prices(
     h = await super_admin(client)
 
     r = await client.post(f"{API}/admin/ai/models/sync", headers=h, json={"provider": "gemini"})
-    assert r.json() == {"provider": "gemini", "added": 2, "updated": 0}  # embedding-only model skipped
+    assert r.json() == {"provider": "gemini", "added": 3, "updated": 0}
     r = await client.post(f"{API}/admin/ai/models/sync", headers=h, json={"provider": "gemini"})
-    assert r.json()["added"] == 0 and r.json()["updated"] == 2
+    assert r.json()["added"] == 0 and r.json()["updated"] == 3
     listed = (await client.get(f"{API}/admin/ai/models", headers=h)).json()
-    assert {m["model_id"] for m in listed} == {"gemini-test-flash", "gemini-test-pro"}
-    assert all(not m["active"] for m in listed) and listed[0]["context_window"] == 1_000_000
+    kinds = {m["model_id"]: m["kind"] for m in listed}
+    assert kinds == {
+        "gemini-test-flash": "chat",
+        "gemini-test-pro": "chat",
+        "gemini-embedding-test": "embedding",
+    }
+    assert all(not m["active"] for m in listed)
+    assert next(m for m in listed if m["model_id"] == "gemini-test-flash")["context_window"] == 1_000_000
     assert (await owner.get(f"{API}/ai/models")).json() == []
 
     flash = next(m for m in listed if m["model_id"] == "gemini-test-flash")

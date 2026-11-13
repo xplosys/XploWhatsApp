@@ -215,6 +215,12 @@ function Bubble({ message: m }: { message: ChatMessage }) {
           {!inbound && ` · ${STATUS_LABEL[m.status] ?? m.status}`}
           {m.sender_type === "ai" && (m.ai_provenance?.model ? ` · AI (${m.ai_provenance.model})` : " · AI")}
         </p>
+        {m.sender_type === "ai" && !!m.ai_provenance?.sources?.length && (
+          <p className="mt-1 text-xs text-muted">
+            Sources:{" "}
+            {[...new Set(m.ai_provenance.sources.map((src) => src.title))].join(", ")}
+          </p>
+        )}
         {m.status === "failed" && (
           <p className="mt-1 text-xs text-danger">
             {m.error_message ?? "WhatsApp did not deliver this message."}

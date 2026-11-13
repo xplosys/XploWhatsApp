@@ -17,9 +17,16 @@ import httpx
 import pytest
 from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.wait_strategies import LogMessageWaitStrategy
+
+from tests.support.clamd import FakeClamd
 
 PG_IMAGE = "pgvector/pgvector:pg17"
 REDIS_IMAGE = "redis:7.4-alpine"
+# S3-compatible object storage for tests and development (MinIO's community edition is archived).
+S3_IMAGE = "chrislusf/seaweedfs:4.50"
+S3_KEY, S3_SECRET = "test-access-key", "test-secret-key-0000"
 CSRF = {"X-Requested-With": "XploWhatsApp"}
 PASSWORD = "Correct-Horse-42!"
 META_APP_ID = "1234567890"
@@ -27,10 +34,23 @@ META_APP_SECRET = "test-app-secret"
 
 
 @pytest.fixture(scope="session")
-def containers() -> Iterator[dict[str, str]]:
+def clamd() -> Iterator[FakeClamd]:
+    fake = FakeClamd()
+    yield fake
+    fake.close()
+
+
+@pytest.fixture(scope="session")
+def containers(clamd: FakeClamd) -> Iterator[dict[str, str]]:
     with (
         PostgresContainer(PG_IMAGE, username="postgres", password="postgres", dbname="xplo_test") as pg,
         RedisContainer(REDIS_IMAGE) as redis,
+        DockerContainer(S3_IMAGE)
+        .with_env("AWS_ACCESS_KEY_ID", S3_KEY)
+        .with_env("AWS_SECRET_ACCESS_KEY", S3_SECRET)
+        .with_command("mini -dir=/data")
+        .with_exposed_ports(8333)
+        .waiting_for(LogMessageWaitStrategy("connected to filers").with_startup_timeout(90)) as objects,
     ):
         host = pg.get_container_host_ip()
         port = pg.get_exposed_port(5432)
@@ -60,6 +80,12 @@ def containers() -> Iterator[dict[str, str]]:
             "META_WEBHOOK_VERIFY_TOKEN": "verify-me",
             "META_EMBEDDED_SIGNUP_CONFIG_ID": "cfg-123",
             "META_GRAPH_API_VERSION": "v25.0",
+            "S3_ENDPOINT_URL": f"http://{objects.get_container_host_ip()}:{objects.get_exposed_port(8333)}",
+            "S3_ACCESS_KEY_ID": S3_KEY,
+            "S3_SECRET_ACCESS_KEY": S3_SECRET,
+            "S3_BUCKET": "xplo-test",
+            "CLAMAV_HOST": "127.0.0.1",
+            "CLAMAV_PORT": str(clamd.port),
         }
         os.environ.update(env)
         yield env
@@ -104,6 +130,16 @@ async def database(containers: dict[str, str]) -> AsyncIterator[dict[str, str]]:
     await bootstrap_database(get_settings())
     await asyncio.to_thread(run_alembic, "upgrade", "head")
     await _seed_plans()
+    from app.modules.storage.s3 import ensure_bucket
+
+    for attempt in range(30):  # the S3 gateway may still be connecting to its filer
+        try:
+            await ensure_bucket()
+            break
+        except Exception:
+            if attempt == 29:
+                raise
+            await asyncio.sleep(1)
     yield containers
     from app.core.redis import close_redis
     from app.db.session import dispose_engines

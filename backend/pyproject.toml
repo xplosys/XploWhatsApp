@@ -22,16 +22,22 @@ dependencies = [
     "structlog>=24.4",
     "pgvector>=0.3",
     "typer>=0.15",
+    "aioboto3>=13",
+    "pypdf>=6",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "python-multipart>=0.0.20",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
-    "testcontainers[postgres,redis]>=4.9",
     "psycopg[binary]>=3.2",
     "ruff>=0.8",
     "mypy>=1.13",
+    "types-aioboto3[s3]>=15.5.0",
+    "testcontainers[postgres,redis]>=4.9",
 ]
 
 [tool.uv]
@@ -47,7 +53,7 @@ select = ["E", "F", "I", "B", "UP", "S", "ASYNC", "RUF"]
 ignore = ["S101", "B008", "RUF012", "S105", "S106", "S107"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S311", "S608"]  # table names in SQL come from model metadata
+"tests/**" = ["S311", "S608", "S104", "F811"]  # SQL table names come from model metadata; fixtures are imported and reused as parameters
 "alembic/**" = ["E501"]
 "tests/isolation/**" = ["E501"]  # raw SQL fixtures read better unwrapped
 "app/modules/ai/prompt.py" = ["E501"]  # prompt prose reads better unwrapped

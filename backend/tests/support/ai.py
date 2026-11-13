@@ -5,7 +5,10 @@ provider answers a polite generic reply. Every request is recorded."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,8 +20,55 @@ HOSTS = {
     "api.deepseek.com": "deepseek",
 }
 
+DIMENSIONS = 1536
+STOPWORDS = {
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "and",
+    "or",
+    "of",
+    "to",
+    "for",
+    "in",
+    "on",
+    "at",
+    "do",
+    "you",
+    "your",
+    "we",
+    "our",
+    "i",
+    "it",
+    "what",
+    "how",
+    "much",
+    "does",
+    "can",
+    "with",
+    "be",
+    "by",
+    "from",
+}
+
+
+def fake_vector(text: str, dims: int = DIMENSIONS) -> list[float]:
+    """Hashed bag of words: texts sharing words get a high cosine similarity, so
+    retrieval tests behave like a real embedding model on simple questions."""
+    vector = [0.0] * dims
+    for word in re.findall(r"[a-z0-9₹]+", text.lower()):
+        if word in STOPWORDS:
+            continue
+        word = word.removesuffix("s") if len(word) > 3 else word
+        vector[int(hashlib.sha256(word.encode()).hexdigest(), 16) % dims] += 1.0
+    norm = math.sqrt(sum(v * v for v in vector)) or 1.0
+    return [v / norm for v in vector]
+
+
 MODELS = {
-    "openai": ["gpt-test-mini", "gpt-test"],
+    "openai": ["gpt-test-mini", "gpt-test", "text-embedding-test"],
     "gemini": ["gemini-test-flash", "gemini-test-pro"],
     "deepseek": ["deepseek-test-chat"],
 }
@@ -29,6 +79,8 @@ class FakeAI:
     queues: dict[str, list[tuple[str, Any]]] = field(default_factory=lambda: {p: [] for p in MODELS})
     requests: list[tuple[str, httpx.Request]] = field(default_factory=list)
     valid_keys: set[str] = field(default_factory=set)  # empty: any key works
+    embed_failures: list[tuple[str, int]] = field(default_factory=list)
+    embed_dimensions: int | None = None  # override to simulate a model with the wrong size
 
     def reply(
         self, provider: str, text: str, *, needs_human: bool = False, out_of_scope: bool = False
@@ -47,7 +99,17 @@ class FakeAI:
         self.queues[provider].append((kind, None))
 
     def calls(self, provider: str) -> list[dict[str, Any]]:
-        return [json.loads(r.content) for p, r in self.requests if p == provider and r.method == "POST"]
+        return [
+            json.loads(r.content)
+            for p, r in self.requests
+            if p == provider and r.method == "POST" and not _is_embedding(r)
+        ]
+
+    def embed_calls(self, provider: str) -> list[dict[str, Any]]:
+        return [json.loads(r.content) for p, r in self.requests if p == provider and _is_embedding(r)]
+
+    def fail_embedding(self, provider: str, status: int) -> None:
+        self.embed_failures.append((provider, status))
 
     @property
     def transport(self) -> httpx.MockTransport:
@@ -80,6 +142,8 @@ class FakeAI:
         if request.method == "GET":
             return self._models(provider)
         body = json.loads(request.content)
+        if _is_embedding(request):
+            return self._embed(provider, request, body)
         kind, value = (
             self.queues[provider].pop(0)
             if self.queues[provider]
@@ -95,6 +159,44 @@ class FakeAI:
             return httpx.Response(status, json={"error": {"message": message}})
         return getattr(self, f"_{provider}")(body, kind, value)
 
+    def _embed(self, provider: str, request: httpx.Request, body: dict[str, Any]) -> httpx.Response:
+        for i, (p, status) in enumerate(self.embed_failures):
+            if p == provider:
+                self.embed_failures.pop(i)
+                return httpx.Response(status, json={"error": {"message": f"embedding failed {status}"}})
+        dims = self.embed_dimensions
+        if provider == "openai":
+            assert body["dimensions"] == DIMENSIONS and body["encoding_format"] == "float"
+            texts = body["input"]
+            data = [
+                {"object": "embedding", "index": i, "embedding": fake_vector(t, dims or DIMENSIONS)}
+                for i, t in enumerate(texts)
+            ]
+            tokens = sum(len(t) // 4 + 1 for t in texts)
+            return httpx.Response(
+                200,
+                json={
+                    "object": "list",
+                    "data": list(reversed(data)),  # order must come from `index`
+                    "model": body["model"],
+                    "usage": {"prompt_tokens": tokens, "total_tokens": tokens},
+                },
+            )
+        assert provider == "gemini"
+        path_model = request.url.path.split("/models/", 1)[1].split(":", 1)[0]
+        embeddings, tokens = [], 0
+        for item in body["requests"]:
+            assert item["model"] == f"models/{path_model}"
+            config = item["embedContentConfig"]
+            assert config["outputDimensionality"] == DIMENSIONS
+            assert config["taskType"] in ("RETRIEVAL_QUERY", "RETRIEVAL_DOCUMENT")
+            text = item["content"]["parts"][0]["text"]
+            embeddings.append({"values": fake_vector(text, dims or DIMENSIONS)})
+            tokens += len(text) // 4 + 1
+        return httpx.Response(
+            200, json={"embeddings": embeddings, "usageMetadata": {"promptTokenCount": tokens}}
+        )
+
     def _models(self, provider: str) -> httpx.Response:
         ids = MODELS[provider]
         if provider == "gemini":
@@ -109,7 +211,11 @@ class FakeAI:
                 for m in ids
             ]
             models.append(
-                {"name": "models/text-embedding-test", "supportedGenerationMethods": ["embedContent"]}
+                {
+                    "name": "models/gemini-embedding-test",
+                    "displayName": "Gemini Embedding Test",
+                    "supportedGenerationMethods": ["embedContent", "countTokens"],
+                }
             )
             return httpx.Response(200, json={"models": models})
         return httpx.Response(
@@ -248,3 +354,8 @@ class FakeAI:
                 "usage": usage,
             },
         )
+
+
+def _is_embedding(request: httpx.Request) -> bool:
+    path = request.url.path
+    return path.endswith("/v1/embeddings") or path.endswith(":batchEmbedContents")
