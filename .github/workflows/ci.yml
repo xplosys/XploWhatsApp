@@ -104,7 +104,9 @@ jobs:
           docker build -t xplowhatsapp-frontend ./frontend
       - name: Scan images (Trivy, fixable high and critical)
         run: |
+          status=0
           for image in xplowhatsapp-api xplowhatsapp-frontend; do
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 image \
-              --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$image"
+              --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$image" || status=1
           done
+          exit $status

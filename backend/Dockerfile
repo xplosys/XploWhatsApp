@@ -9,6 +9,8 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-install-project
 
 FROM base AS runtime
+# Debian security fixes released after the base image was published.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system app && useradd --system --gid app --home /app app
 COPY --from=builder /app/.venv /app/.venv
 COPY alembic.ini ./
