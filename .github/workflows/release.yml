@@ -1,0 +1,91 @@
+name: Release
+
+# Every push to main builds both images and pushes them to GitHub Container Registry,
+# tagged with the commit. Deploying needs the repository variable DEPLOY_HOST and the
+# "production" environment (add required reviewers there to approve each deploy).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to deploy (a commit SHA already built). Leave empty to build this commit."
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/xplowhatsapp
+
+jobs:
+  images:
+    if: ${{ !inputs.tag }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: API image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          build-args: APP_VERSION=${{ steps.tag.outputs.tag }}
+          tags: ${{ env.IMAGE_PREFIX }}-api:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+      - name: Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          build-args: APP_VERSION=${{ steps.tag.outputs.tag }}
+          tags: ${{ env.IMAGE_PREFIX }}-frontend:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+  deploy:
+    needs: [images]
+    if: ${{ always() && vars.DEPLOY_HOST != '' && (needs.images.result == 'success' || (needs.images.result == 'skipped' && inputs.tag)) }}
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      TAG: ${{ inputs.tag || needs.images.outputs.tag }}
+      HOST: ${{ vars.DEPLOY_HOST }}
+      USER_AT_HOST: ${{ vars.DEPLOY_USER || 'deploy' }}@${{ vars.DEPLOY_HOST }}
+      DIR: ${{ vars.DEPLOY_DIR || '/opt/xplowhatsapp' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: SSH key and host key
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: Copy the deploy files for this release
+        run: |
+          tar czf - --exclude='deploy/secrets/*' docker-compose.prod.yml deploy \
+            | ssh -i ~/.ssh/id_deploy "$USER_AT_HOST" "mkdir -p '$DIR' && tar xzf - -C '$DIR'"
+      - name: Deploy
+        run: |
+          # This job's short-lived token lets the server pull the images; nothing is stored.
+          echo "${{ secrets.GITHUB_TOKEN }}" | ssh -i ~/.ssh/id_deploy "$USER_AT_HOST" \
+            "docker login ghcr.io -u '${{ github.actor }}' --password-stdin >/dev/null && cd '$DIR' && sed -i 's#^IMAGE_PREFIX=.*#IMAGE_PREFIX=$IMAGE_PREFIX#' .env && deploy/scripts/deploy.sh '$TAG'; status=\$?; docker logout ghcr.io >/dev/null; exit \$status"

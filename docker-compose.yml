@@ -1,5 +1,5 @@
-# Local development stack. Production overrides (Nginx, TLS, backups, monitoring)
-# arrive in Phase 9 as docker-compose.prod.yml.
+# Local development stack. Production runs from docker-compose.prod.yml
+# (docs/DEPLOYMENT_UBUNTU.md).
 name: xplowhatsapp
 
 x-backend-env: &backend-env

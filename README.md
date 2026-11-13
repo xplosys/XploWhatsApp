@@ -2,7 +2,7 @@
 
 AI-powered WhatsApp customer engagement and automation platform by XploSys. Multi-tenant SaaS built on the official Meta WhatsApp Cloud API.
 
-**Status:** Phases 1 to 6 (foundation, WhatsApp, AI assistant, knowledge base, conversation management, customer dashboard) complete. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+**Status:** Phases 1 to 9 complete: foundation, WhatsApp, AI assistant, knowledge base, conversation management, customer dashboard, billing, security hardening, and monitoring and deployment. Phases 7 to 9 are awaiting review. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): system design, diagrams, data model, security decisions
 - [docs/META_INTEGRATION.md](docs/META_INTEGRATION.md): Meta setup, approvals and onboarding sequence
@@ -12,6 +12,7 @@ AI-powered WhatsApp customer engagement and automation platform by XploSys. Mult
 - [docs/ANALYTICS.md](docs/ANALYTICS.md): overview and analytics figures, how each is counted, and who sees them
 - [docs/BILLING.md](docs/BILLING.md): plans and prices, Razorpay and Stripe, webhooks, plan changes and seats, GST invoices
 - [docs/SECURITY.md](docs/SECURITY.md): threat model, controls, key rotation, incident response, pen-test checklist, DPDP/GDPR data tools
+- [docs/DEPLOYMENT_UBUNTU.md](docs/DEPLOYMENT_UBUNTU.md): production server setup, TLS, deploys from GitHub, backups and restore, monitoring and alerts
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md): phased plan
 
 Stack: Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Celery, PostgreSQL 17 + pgvector, Redis, Next.js 16 + TypeScript + Tailwind CSS 4, Docker Compose.

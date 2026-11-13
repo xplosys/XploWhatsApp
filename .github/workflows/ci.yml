@@ -110,3 +110,25 @@ jobs:
               --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$image" || status=1
           done
           exit $status
+
+  deploy-config:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Alert rules (promtool)
+        run: |
+          docker run --rm -v "$PWD/deploy/monitoring:/m" -w /m/tests --entrypoint promtool \
+            prom/prometheus:v3.5.0 test rules xplowhatsapp.test.yml
+          echo token > /tmp/metrics_token
+          docker run --rm -v "$PWD/deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$PWD/deploy/monitoring/rules:/etc/prometheus/rules:ro" -v /tmp/metrics_token:/etc/prometheus/metrics_token:ro \
+            --entrypoint promtool prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
+      - name: Compose file
+        run: |
+          cp .env.example .env
+          IMAGE_TAG=ci APP_DOMAIN=app.example.com GRAFANA_ADMIN_PASSWORD=x \
+            docker compose -f docker-compose.prod.yml --profile monitoring --profile ops --profile storage config --quiet
+      - name: Nginx configuration
+        run: deploy/scripts/test-nginx.sh
+      - name: Shell scripts
+        run: shellcheck deploy/scripts/*.sh deploy/backup/*.sh deploy/nginx/*.sh

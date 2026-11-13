@@ -117,7 +117,16 @@ class Settings(BaseSettings):
     data_exports_per_day: int = 3
     webhook_event_retention_days: int = 30
 
+    # Monitoring (docs/DEPLOYMENT_UBUNTU.md). Errors go to Sentry when a DSN is set.
     sentry_dsn: SecretStr | None = None
+    sentry_traces_sample_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Set by the image build (git commit); tags Sentry events and the /metrics build info.
+    app_version: str = "dev"
+    # Bearer token Prometheus sends to /metrics. Without one, /metrics answers only in
+    # development; in staging and production it is off.
+    metrics_token: SecretStr | None = None
+    # The worker's metrics port, scraped inside the private network only.
+    worker_metrics_port: int = 9808
 
     # Background jobs
     task_dispatch: TaskDispatch = TaskDispatch.CELERY

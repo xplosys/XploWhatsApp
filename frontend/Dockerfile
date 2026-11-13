@@ -18,6 +18,8 @@ RUN pnpm build
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
 # Alpine security fixes released after the base image was published. The server runs
 # with node alone, so the image's bundled npm and corepack (and their dependencies) go.
 RUN apk upgrade --no-cache \

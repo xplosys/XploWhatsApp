@@ -1,7 +1,7 @@
 # XploWhatsApp — project status
 
 **Last updated:** 2026-11-13
-**Current phase:** Phase 8 complete, awaiting approval to start Phase 9 (monitoring and deployment)
+**Current phase:** Phase 9 complete, awaiting approval to start Phase 10 (production testing and release)
 
 ## Phase tracker
 
@@ -15,9 +15,103 @@
 | 5. Conversation management | Done (PR #5) | See Phase 5 report and docs/CONVERSATIONS.md |
 | 6. Customer dashboard | Done (PR #6) | See Phase 6 report and docs/ANALYTICS.md |
 | 7. Billing and subscriptions | Done, awaiting review (PR #7) | See Phase 7 report and docs/BILLING.md |
-| 8. Security hardening | Done, awaiting review | See Phase 8 report and docs/SECURITY.md |
-| 9. Monitoring and deployment | Not started | |
+| 8. Security hardening | Done, awaiting review (PR #8) | See Phase 8 report and docs/SECURITY.md |
+| 9. Monitoring and deployment | Done, awaiting review | See Phase 9 report and docs/DEPLOYMENT_UBUNTU.md |
 | 10. Production testing and release | Not started | |
+
+## Phase 9 report
+
+### What is complete
+
+- **Metrics (ADR 055):** Prometheus metrics for every API route (requests, status codes, latency), every background task (runs, outcome, duration), every AI provider call (result, latency) and queue depth. Labels are bounded: no IDs, phone numbers or business names. `/metrics` needs a token outside development and is never served publicly.
+- **Dashboards:** two Grafana dashboards, provisioned from code:
+  - "XploWhatsApp: app": traffic, errors, latency, slowest routes, queue, WhatsApp sends, AI replies and provider calls;
+  - "XploWhatsApp: server": CPU, memory, disk, last backup, Postgres and Redis.
+- **Alerts:** 15 rules, emailed through the existing SMTP settings:
+  - a service down;
+  - API errors or slowness;
+  - a queue backlog;
+  - failing WhatsApp sends;
+  - failing tasks or AI providers;
+  - missing backups, off-site copies or restore checks;
+  - disk, memory, Postgres connections and Redis memory.
+
+  The rules have unit tests (promtool).
+- **Sentry (ADR 056):** errors from the API, the workers and browsers, tagged with the release. No request bodies, cookies, auth headers, user details or local variables are sent. Browser reports go through the app's own `/monitoring` path, which forwards only to the configured project.
+- **Production stack (ADR 057):** `docker-compose.prod.yml` runs everything on one server from CI-built images. Monitoring and self-hosted storage are optional profiles, and only Nginx is exposed to the internet.
+- **Nginx and TLS (ADR 058):**
+  - Let's Encrypt certificates with automatic renewal;
+  - HTTP redirected to HTTPS, with HSTS sent once;
+  - per-IP rate limits;
+  - the files domain is download-only.
+- **Security fix:** the API container trusted `X-Forwarded-For` from anyone, so a client could pick its own IP and slip past the per-IP sign-in limits. Nginx now overwrites those headers, and the API ignores forwarded headers.
+- **Backups (ADR 059):**
+  - nightly `pg_dump` encrypted to a GPG key whose private half stays off the server;
+  - an off-site copy to any S3-compatible storage;
+  - a weekly automatic restore check;
+  - a one-command restore;
+  - systemd timers.
+- **Deploys (ADR 060):** every push to `main` builds and pushes the images, then deploys over SSH:
+  1. an encrypted dump;
+  2. migrations;
+  3. a restart and health check;
+  4. an automatic rollback to the previous release if the check fails.
+
+  A manual run with an older tag rolls back.
+- **docs/DEPLOYMENT_UBUNTU.md:** a step-by-step guide covering:
+  - server setup and firewall;
+  - DNS, `.env` and object storage;
+  - backup keys, certificates and the first deploy;
+  - GitHub deploy settings;
+  - backups and restore;
+  - monitoring;
+  - routine operations.
+
+### Tests
+
+- Backend: 315 tests, all passing (4 new). They cover:
+  - metrics access (open in development, 404 in production without the token);
+  - route templates without IDs;
+  - task result labels;
+  - Sentry scrubbing.
+- `ruff`, `mypy --strict`, `eslint`, `tsc`, `next build`, `alembic check`, `shellcheck` and the promtool rule tests: clean.
+- `deploy/scripts/test-nginx.sh` (also in CI) checks 10 behaviours of the real Nginx config:
+  - HTTPS redirect;
+  - HSTS;
+  - hidden `/metrics` and health endpoints;
+  - spoofed `X-Real-IP` and `X-Forwarded-For` replaced;
+  - download-only files domain;
+  - unknown hosts refused.
+- A full production rehearsal on this machine, with `ENVIRONMENT=production`, both domains over HTTPS (self-signed certificates) and every service from the production compose file. Screenshots are in the project files under `phase9/`. It confirmed:
+  - registration and the dashboard over HTTPS;
+  - a spoofed IP ignored;
+  - the refresh cookie Secure, HttpOnly and SameSite=Strict;
+  - all Prometheus targets up and both dashboards showing live data;
+  - an encrypted backup with no readable text;
+  - a restore check passing;
+  - an off-site copy landing in the bucket;
+  - a real restore removing data added after the dump, with the app back up afterwards;
+  - stopping the worker sending a ServiceDown email within three minutes, and a resolved email after restart.
+- Found and fixed in the rehearsal:
+  - the deploy job's `tar` would have failed (option order);
+  - the monitoring stack would never have started (no `COMPOSE_PROFILES`);
+  - alert email links pointed at container IDs;
+  - CI's shellcheck step would have failed;
+  - "Server errors" read "No data" instead of 0.
+
+### Not verified here
+
+- Building and pushing the images, and the SSH deploy itself: they run in GitHub Actions on the first push to `main`. This sandbox can't install packages inside `docker build`, so the rehearsal ran the same code on stock Python and Node images.
+- Real Let's Encrypt certificates: they need a public domain.
+- node-exporter's host mount with `rslave`: this sandbox lacks a shared root mount, and normal Ubuntu has one.
+- Sentry delivery to a real project: the tunnel's checks are tested, but no DSN exists yet.
+
+### Known limitations of Phase 9
+
+- One server: a hardware failure means restoring onto a new one. The nightly dump bounds data loss at about a day; WAL archiving or a managed Postgres would shrink that.
+- Alerts are email only. Slack or PagerDuty is one more Alertmanager receiver.
+- Grafana, Prometheus and Alertmanager are reached through an SSH tunnel, not a public login.
+- Logs stay on the server (rotated, 100 MB per container). There is no central log search.
 
 ## Phase 8 report
 
@@ -305,8 +399,8 @@
 
 ## Open decisions (need the owner's input)
 
-1. Approve Phase 8 and start Phase 9 (monitoring and deployment).
-2. Production object storage provider (decided by Phase 9).
+1. Approve Phase 9 and start Phase 10 (production testing and release).
+2. Production object storage: a managed bucket or self-hosted SeaweedFS (docs/DEPLOYMENT_UBUNTU.md §4), and an off-site backup provider in another company or region.
 3. Billing entity for UK/US customers (affects Stripe), and the GST details for invoices: SAC code, LUT number, invoice prefix (docs/BILLING.md).
 4. Legal review of Meta's WhatsApp Business Solution Terms for AI use, of DPDP/GDPR obligations, and of the breach notification steps in docs/SECURITY.md.
 
@@ -315,6 +409,7 @@
 - Create or confirm the Meta Business Portfolio and start business verification.
 - Create the Meta Developer App (Business type) and add WhatsApp.
 - Publish privacy policy, terms and data deletion pages on xplowhatsapp.com.
+- Rent the production server (4 vCPU, 8 GB), point `app.` (and `files.`) DNS at it, create a Sentry organisation, and follow docs/DEPLOYMENT_UBUNTU.md.
 - Open Gemini, OpenAI and DeepSeek API accounts, put the platform keys in the server environment, and enter current model prices in the Super Admin catalogue (see docs/AI_PROVIDERS.md).
 
 ## Known limitations (deliberate, documented)
