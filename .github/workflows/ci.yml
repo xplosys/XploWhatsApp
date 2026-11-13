@@ -92,6 +92,10 @@ jobs:
       - name: End-to-end tests
         working-directory: e2e
         run: pnpm test
+      - name: Page snapshots of failed tests
+        if: failure()
+        working-directory: e2e
+        run: find test-results -name error-context.md -exec sh -c 'echo "::group::$1"; cat "$1"; echo "::endgroup::"' _ {} \;
       - name: Service logs
         if: failure()
         run: docker compose -f docker-compose.yml -f e2e/docker-compose.e2e.yml logs --no-color --tail 300

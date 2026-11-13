@@ -82,7 +82,7 @@ test("a clinic signs up, connects WhatsApp, and its assistant answers a customer
   await test.step("usage records the reply", async () => {
     await page.getByRole("link", { name: "AI assistant" }).click();
     await expect(page.getByRole("heading", { name: /Usage in/ })).toBeVisible();
-    await expect(page.getByText(CHAT_MODEL).first()).toBeVisible();
+    await expect(page.getByRole("cell", { name: new RegExp(CHAT_MODEL) })).toBeVisible();
   });
 
   await test.step("the dashboard counts the conversation", async () => {
