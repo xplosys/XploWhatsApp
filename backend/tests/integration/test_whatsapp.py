@@ -661,3 +661,29 @@ async def test_webhook_rows_are_tenant_scoped(
         assert len((await s.execute(select(WebhookEvent))).scalars().all()) == 1
     async with app_transaction(uuid.uuid4()) as s:
         assert (await s.execute(select(WebhookEvent))).scalars().all() == []
+
+
+async def test_test_number_can_be_connected_with_a_token_in_development(
+    register: RegisterFn, meta: FakeMeta, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`python -m app.cli connect-test-number`: Meta's test number before business
+    verification. Same token checks as Embedded Signup; the number is not re-registered."""
+    from app.cli import _connect_test_number
+    from app.core.config import Environment, get_settings
+    from app.core.errors import ValidationFailed
+
+    owner = await register("owner@lotusphysio.in", "Lotus Physiotherapy")
+    meta.token_valid = False
+    with pytest.raises(ValidationFailed):
+        await _connect_test_number("owner@lotusphysio.in", WABA_ID, PHONE_NUMBER_ID, BUSINESS_TOKEN)
+    meta.token_valid = True
+
+    name = await _connect_test_number("owner@lotusphysio.in", WABA_ID, PHONE_NUMBER_ID, BUSINESS_TOKEN)
+    assert name == "Sunrise Dental WABA"
+    [account] = (await owner.get(f"{API}/whatsapp/accounts")).json()
+    assert account["status"] == "connected" and account["numbers"][0]["status"] == "connected"
+    assert meta.subscribed and not meta.registered
+
+    monkeypatch.setattr(get_settings(), "environment", Environment.PRODUCTION)
+    with pytest.raises(ValidationFailed):
+        await _connect_test_number("owner@lotusphysio.in", WABA_ID, PHONE_NUMBER_ID, BUSINESS_TOKEN)

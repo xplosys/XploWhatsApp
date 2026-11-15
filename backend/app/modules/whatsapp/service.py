@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.errors import AppError, Conflict, NotFound, ValidationFailed
 from app.core.security import crypto
-from app.modules.whatsapp.graph import GraphClient, GraphError
+from app.modules.whatsapp.graph import GraphClient, GraphError, TokenInfo
 from app.modules.whatsapp.models import (
     AccountHealth,
     AccountStatus,
@@ -234,33 +234,22 @@ async def _number_owner(session: AsyncSession, phone_number_id: str) -> uuid.UUI
     return row.tenant_id if row else None
 
 
-async def complete_onboarding(
-    session: AsyncSession,
-    tenant_id: uuid.UUID,
-    user_id: uuid.UUID,
-    data: OnboardingInput,
-    graph: GraphClient,
-) -> WhatsAppAccount:
-    """Server side of Embedded Signup. The browser's IDs are hints: every one is
-    re-verified against Graph API with the token Meta issued for this business."""
-    owner = await _waba_owner(session, data.waba_id)
+async def _check_ownership(
+    session: AsyncSession, tenant_id: uuid.UUID, waba_id: str, phone_number_id: str | None
+) -> None:
+    owner = await _waba_owner(session, waba_id)
     if owner is not None and owner != tenant_id:
         raise Conflict(
             "This WhatsApp Business Account is already connected to another XploWhatsApp workspace.",
             code="waba_in_use",
         )
-    if data.phone_number_id:
-        number_owner = await _number_owner(session, data.phone_number_id)
+    if phone_number_id:
+        number_owner = await _number_owner(session, phone_number_id)
         if number_owner is not None and number_owner != tenant_id:
             raise Conflict("This phone number is connected to another workspace.", code="number_in_use")
 
-    try:
-        token = await graph.exchange_code(data.code)
-    except GraphError as exc:
-        raise meta_error(
-            exc, "Meta did not accept the sign-up code. It expires after about 30 seconds; please try again."
-        ) from exc
 
+async def _verify_token(graph: GraphClient, token: str) -> TokenInfo:
     try:
         info = await graph.debug_token(token)
     except GraphError as exc:
@@ -276,6 +265,71 @@ async def complete_onboarding(
             code="scopes_missing",
             details={"missing": missing},
         )
+    return info
+
+
+async def complete_onboarding(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    data: OnboardingInput,
+    graph: GraphClient,
+) -> WhatsAppAccount:
+    """Server side of Embedded Signup. The browser's IDs are hints: every one is
+    re-verified against Graph API with the token Meta issued for this business."""
+    await _check_ownership(session, tenant_id, data.waba_id, data.phone_number_id)
+    try:
+        token = await graph.exchange_code(data.code)
+    except GraphError as exc:
+        raise meta_error(
+            exc, "Meta did not accept the sign-up code. It expires after about 30 seconds; please try again."
+        ) from exc
+    info = await _verify_token(graph, token)
+    coexistence = (data.event or "").upper() == "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING"
+    return await _attach_account(
+        session, tenant_id, user_id, data, graph, token, info, coexistence=coexistence, register=True
+    )
+
+
+async def connect_with_token(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    graph: GraphClient,
+    token: str,
+    waba_id: str,
+    phone_number_id: str,
+    *,
+    register: bool,
+) -> WhatsAppAccount:
+    """Development only (`python -m app.cli connect-test-number`): link an account
+    with a token from the App Dashboard instead of Embedded Signup, for example
+    Meta's test number before business verification. Same checks as Embedded Signup
+    after the code exchange."""
+    if get_settings().is_production_like:
+        raise ValidationFailed("Only Embedded Signup can connect accounts outside development.")
+    await _check_ownership(session, tenant_id, waba_id, phone_number_id)
+    info = await _verify_token(graph, token)
+    data = OnboardingInput(
+        code="", waba_id=waba_id, phone_number_id=phone_number_id, business_id=None, event=None
+    )
+    return await _attach_account(
+        session, tenant_id, user_id, data, graph, token, info, coexistence=False, register=register
+    )
+
+
+async def _attach_account(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    data: OnboardingInput,
+    graph: GraphClient,
+    token: str,
+    info: TokenInfo,
+    *,
+    coexistence: bool,
+    register: bool,
+) -> WhatsAppAccount:
     granted = info.targets_for("whatsapp_business_management")
     if granted and data.waba_id not in granted:
         raise ValidationFailed(
@@ -325,7 +379,6 @@ async def complete_onboarding(
         expires_at=datetime.fromtimestamp(info.expires_at, UTC) if info.expires_at else None,
     )
 
-    coexistence = (data.event or "").upper() == "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING"
     existing = {n.phone_number_id: n for n in await numbers_for(session, account.id)}
     for pid, pdata in by_id.items():
         number = existing.get(pid)
@@ -341,7 +394,12 @@ async def complete_onboarding(
         number = await number_by_phone_number_id(session, tenant_id, data.phone_number_id)
         assert number is not None
         number.is_coexistence = coexistence
-        await _register_number(session, graph, account, number, token)
+        if register:
+            await _register_number(session, graph, account, number, token)
+        else:
+            # Meta's test numbers come registered and cannot be registered again.
+            number.status = NumberStatus.CONNECTED
+            number.registered_at = now
     else:
         add_health_issue(
             account,

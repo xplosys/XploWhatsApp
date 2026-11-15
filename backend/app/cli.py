@@ -136,6 +136,59 @@ def generate_secrets() -> None:
     typer.echo("ENCRYPTION_ACTIVE_KEY_VERSION=v1")
 
 
+async def _connect_test_number(owner_email: str, waba_id: str, phone_number_id: str, token: str) -> str:
+    from app.db.session import admin_transaction, app_transaction
+    from app.modules.audit.service import record
+    from app.modules.auth.models import User
+    from app.modules.tenants.models import TenantMembership, TenantRole
+    from app.modules.whatsapp import service
+    from app.modules.whatsapp.graph import GraphClient
+
+    async with admin_transaction() as session:
+        user = await session.scalar(select(User).where(User.email == owner_email))
+        if user is None:
+            raise typer.BadParameter(f"No user {owner_email}.")
+        tenants = list(
+            await session.scalars(
+                select(TenantMembership.tenant_id).where(
+                    TenantMembership.user_id == user.id, TenantMembership.role == TenantRole.OWNER
+                )
+            )
+        )
+        if len(tenants) != 1:
+            raise typer.BadParameter(f"{owner_email} owns {len(tenants)} businesses; expected exactly one.")
+        tenant_id, user_id = tenants[0], user.id
+
+    async with app_transaction(tenant_id, user_id) as session, GraphClient() as graph:
+        account = await service.connect_with_token(
+            session, tenant_id, user_id, graph, token, waba_id, phone_number_id, register=False
+        )
+        await record(
+            session,
+            "whatsapp.connected",
+            tenant_id=tenant_id,
+            actor_user_id=user_id,
+            target_type="whatsapp_account",
+            target_id=account.id,
+            details={"waba_id": waba_id, "phone_number_id": phone_number_id, "via": "cli_test_number"},
+        )
+        return account.name or waba_id
+
+
+@cli.command("connect-test-number")
+def connect_test_number(owner_email: str, waba_id: str, phone_number_id: str) -> None:
+    """Development only: connect Meta's test number (App Dashboard -> WhatsApp -> API
+    Setup) to the business this person owns, without Embedded Signup. Asks for an
+    access token from the same page. Refused outside development."""
+    if get_settings().is_production_like:
+        raise typer.BadParameter("Only Embedded Signup can connect accounts outside development.")
+    token = getpass.getpass("Access token (from API Setup): ").strip()
+    if not token:
+        raise typer.BadParameter("No token given.")
+    name = asyncio.run(_connect_test_number(owner_email, waba_id, phone_number_id, token))
+    typer.echo(f"Connected {name}. Automatic replies use it as soon as the assistant is on.")
+
+
 if __name__ == "__main__":
     cli()
 
