@@ -90,8 +90,10 @@ services:
 
   api:
     <<: *backend
+    # No uvicorn access log: it prints query strings, which can carry tokens (Meta's
+    # webhook verify token). Nginx keeps the access log, without query strings.
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers",
-              "--workers", "${API_WORKERS:-2}"]
+              "--no-access-log", "--workers", "${API_WORKERS:-2}"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
