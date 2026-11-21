@@ -340,6 +340,27 @@ async def test_failed_models_hand_over_once(clinic: Actor, client: httpx.AsyncCl
     assert len((await clinic.get(f"{API}/conversations/{conv_id}/handovers")).json()) == 1
 
 
+async def test_after_hand_back_the_assistant_answers_from_the_new_messages(
+    clinic: Actor, client: httpx.AsyncClient, ai: FakeAI
+) -> None:
+    """A request for a person that the team already dealt with must not hand the
+    conversation over again once it is handed back."""
+    await setup_assistant(clinic, config(summary_on_handover=False))
+    ai.reply("openai", "I'll get someone from the team.", needs_human=True)
+    await deliver(client, inbound_text("I want to speak to someone"))
+    conv_id = (await only_conversation(clinic))["id"]
+    await clinic.post(f"{API}/conversations/{conv_id}/takeover")
+    await clinic.post(f"{API}/conversations/{conv_id}/messages", json={"text": "Hi, Dr Rao here."})
+    await clinic.post(f"{API}/conversations/{conv_id}/release")
+    await run_jobs()
+
+    ai.reply("openai", "We open at 9am.")
+    assert "replied" in await deliver(client, inbound_text("What are your timings?", wamid="wamid.IN0002"))
+    prompt = json.dumps(ai.calls("openai")[-1])
+    assert "What are your timings?" in prompt
+    assert "speak to someone" not in prompt and "Dr Rao" not in prompt
+
+
 async def test_reply_blocked_by_disconnected_account_keeps_the_assistant_on(
     clinic: Actor, client: httpx.AsyncClient, ai: FakeAI
 ) -> None:

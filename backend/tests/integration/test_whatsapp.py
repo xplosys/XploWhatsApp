@@ -547,6 +547,20 @@ async def test_send_retries_transient_errors_then_fails_permanent(
     assert out["status"] == "failed" and out["error_code"] == "131026"
 
 
+async def test_access_denied_on_send_marks_account_needs_reconnect(
+    connected: tuple[Actor, dict[str, Any]], client: httpx.AsyncClient, meta: FakeMeta
+) -> None:
+    """131005 is what Meta returns when the token in use was replaced or lost access."""
+    owner, account = connected
+    await deliver(client, inbound_text("Hello"))
+    conv = (await owner.get(f"{API}/conversations")).json()["items"][0]
+    meta.fail(r"POST /\d+/messages", 403, 131005, "Access denied")
+    await owner.post(f"{API}/conversations/{conv['id']}/messages", json={"text": "one"})
+    assert await run_jobs() == ["failed"]
+    acc = (await owner.get(f"{API}/whatsapp/accounts/{account['id']}")).json()
+    assert acc["status"] == "needs_reconnect"
+
+
 async def test_token_revoked_marks_account_needs_reconnect(
     connected: tuple[Actor, dict[str, Any]], client: httpx.AsyncClient, meta: FakeMeta
 ) -> None:

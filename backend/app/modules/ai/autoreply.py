@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -38,6 +38,7 @@ from app.modules.conversations.models import (
     Contact,
     Conversation,
     Direction,
+    HandoverSession,
     HandoverStarter,
     Message,
     SenderType,
@@ -93,14 +94,22 @@ def _turn(message: Message) -> Turn | None:
 
 
 async def history(session: AsyncSession, conversation_id: uuid.UUID) -> list[Turn]:
+    """The recent messages the assistant answers from. When the team handed the
+    conversation back, it starts there: what came before was dealt with by a person,
+    and an old "let me speak to someone" would otherwise hand it over again."""
     settings = get_settings()
+    handed_back = await session.scalar(
+        select(func.max(HandoverSession.released_at)).where(
+            HandoverSession.conversation_id == conversation_id
+        )
+    )
+    query = select(Message).where(Message.conversation_id == conversation_id)
+    if handed_back is not None:
+        query = query.where(Message.created_at > handed_back)
     rows = list(
         (
             await session.execute(
-                select(Message)
-                .where(Message.conversation_id == conversation_id)
-                .order_by(Message.created_at.desc())
-                .limit(settings.ai_history_messages)
+                query.order_by(Message.created_at.desc()).limit(settings.ai_history_messages)
             )
         ).scalars()
     )

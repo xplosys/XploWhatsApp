@@ -20,7 +20,7 @@ log = structlog.get_logger(__name__)
 
 # Meta error codes (https://developers.facebook.com/documentation/business-messaging/whatsapp/support/error-codes)
 TOKEN_ERROR_CODES = {190, 102, 463, 467}  # invalid / expired / revoked token
-PERMISSION_ERROR_CODES = {10, 200, 299}
+PERMISSION_ERROR_CODES = {10, 200, 299, 131005}  # 131005: access denied
 RATE_LIMIT_CODES = {4, 17, 32, 80007, 130429, 131048, 131056, 133016}
 TRANSIENT_CODES = {1, 2, 131000, 131016, 133004}
 OUTSIDE_WINDOW_CODE = 131047

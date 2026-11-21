@@ -339,7 +339,7 @@ async def send_job(job_id: uuid.UUID, tenant_id: uuid.UUID) -> str:
             return job.status
         assert error is not None
         job.last_error = str(error)[:2000]
-        if error.is_token_error:
+        if error.is_token_error or error.is_permission_error:
             account = await session.get(WhatsAppAccount, prepared.account_id)
             if account is not None:
                 account.status = AccountStatus.NEEDS_RECONNECT
