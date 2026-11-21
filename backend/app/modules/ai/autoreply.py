@@ -279,6 +279,12 @@ async def _deliver(
         )
     except AppError as exc:
         log.warning("ai_reply_blocked", conversation_id=str(conversation_id), code=exc.code)
+        if exc.code in ACCOUNT_BLOCKS:
+            # Nobody could send from this number right now, a person included. Turning
+            # the assistant off would leave the customer unanswered after the account is
+            # reconnected, so the conversation stays with the assistant. The account's
+            # health alert tells the business what to fix.
+            return f"blocked:{exc.code}"
         await _hand_over(
             session,
             conversation,
@@ -302,6 +308,10 @@ async def _deliver(
     if job is not None:
         run_after_commit(session, lambda: outbound.dispatch_job(job))
     return "handover" if outcome.kind == "handover" else "replied"
+
+
+# Policy denials about the WhatsApp account or number rather than the conversation.
+ACCOUNT_BLOCKS = frozenset({"account_needs_reconnect", "account_not_connected", "number_not_connected"})
 
 
 def _hits(outcome: Outcome) -> int | None:

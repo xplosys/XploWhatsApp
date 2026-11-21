@@ -340,6 +340,31 @@ async def test_failed_models_hand_over_once(clinic: Actor, client: httpx.AsyncCl
     assert len((await clinic.get(f"{API}/conversations/{conv_id}/handovers")).json()) == 1
 
 
+async def test_reply_blocked_by_disconnected_account_keeps_the_assistant_on(
+    clinic: Actor, client: httpx.AsyncClient, ai: FakeAI
+) -> None:
+    """If the account needs reconnecting, nobody can send. The assistant stays on, so
+    it answers the customer's next message once the account is back."""
+    from sqlalchemy import update
+
+    from app.modules.whatsapp.models import AccountStatus, WhatsAppAccount
+
+    await setup_assistant(clinic, config(summary_on_handover=False))
+    tenant_id = uuid.UUID(clinic.tenant_id)
+    async with app_transaction(tenant_id) as s:
+        await s.execute(update(WhatsAppAccount).values(status=AccountStatus.NEEDS_RECONNECT))
+    ai.reply("openai", "We open at 9am.")
+    assert "blocked:account_needs_reconnect" in await deliver(client, inbound_text("When do you open?"))
+    conv = await only_conversation(clinic)
+    assert conv["ai_enabled"] and not conv["needs_human"] and conv["handover"] is None
+    assert (await clinic.get(f"{API}/knowledge/unanswered")).json()["open"] == 0
+
+    async with app_transaction(tenant_id) as s:
+        await s.execute(update(WhatsAppAccount).values(status=AccountStatus.CONNECTED))
+    ai.reply("openai", "We open at 9am.")
+    assert "replied" in await deliver(client, inbound_text("Hello?", wamid="wamid.IN0002"))
+
+
 # ---- notes ----------------------------------------------------------------------------
 
 
