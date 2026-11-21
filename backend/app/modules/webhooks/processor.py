@@ -33,6 +33,14 @@ class RetryLater(Exception):
     that arrives before the send result is committed)."""
 
 
+# A status for a message we have no record of is retried this many times (about 35
+# seconds with the backoff below), which covers a send result still being committed.
+# After that the message was sent by something else: the WhatsApp Business app on a
+# coexistence number, Meta's API Setup page, or another integration. Those statuses are
+# ignored rather than failed.
+UNKNOWN_STATUS_ATTEMPTS = 4
+
+
 def _ts(value: Any) -> datetime:
     try:
         return datetime.fromtimestamp(int(value), UTC)
@@ -85,12 +93,16 @@ def wants_reply(message: Message) -> bool:
     return not (message.type == "text" and conv.consent_keyword(message.body))
 
 
-async def _handle_messages(session: AsyncSession, tenant_id: uuid.UUID, value: dict[str, Any]) -> None:
+async def _handle_messages(
+    session: AsyncSession, tenant_id: uuid.UUID, value: dict[str, Any], *, attempts: int = 0
+) -> bool:
+    """Returns False when nothing in the event concerned this workspace's records.
+    `attempts` is how many times the event was tried before."""
     phone_number_id = str((value.get("metadata") or {}).get("phone_number_id") or "")
     number = await wa.number_by_phone_number_id(session, tenant_id, phone_number_id)
     if number is None:
         log.info("webhook_number_not_found", phone_number_id=phone_number_id)
-        return
+        return True
 
     profiles: dict[str, dict[str, Any]] = {}
     for c in value.get("contacts") or []:
@@ -146,12 +158,22 @@ async def _handle_messages(session: AsyncSession, tenant_id: uuid.UUID, value: d
         if stored is not None and wants_reply(stored):
             await autoreply.schedule_after_inbound(session, tenant_id, stored)
 
-    for status in value.get("statuses") or []:
+    statuses = value.get("statuses") or []
+    unknown = 0
+    for status in statuses:
         wa_message_id = str(status.get("id") or "")
         msg = await conv.message_by_wa_id(session, tenant_id, wa_message_id)
         if msg is None:
-            # The send result may not be committed yet; retry a few times.
-            raise RetryLater(f"message {wa_message_id} not found for status {status.get('status')}")
+            if attempts + 1 < UNKNOWN_STATUS_ATTEMPTS:
+                # The send result may not be committed yet; retry a few times.
+                raise RetryLater(f"message {wa_message_id} not found for status {status.get('status')}")
+            log.info(
+                "webhook_status_for_unknown_message",
+                wa_message_id=wa_message_id,
+                status=status.get("status"),
+            )
+            unknown += 1
+            continue
         conv.apply_status(
             msg,
             status=str(status.get("status")),
@@ -162,6 +184,7 @@ async def _handle_messages(session: AsyncSession, tenant_id: uuid.UUID, value: d
 
     if value.get("errors"):
         log.warning("webhook_value_errors", errors=value.get("errors"))
+    return not (statuses and unknown == len(statuses) and not value.get("messages"))
 
 
 async def _handle_template_status(
@@ -277,7 +300,9 @@ async def process_event(event_id: uuid.UUID, tenant_id: uuid.UUID) -> str:
             )
             handled = True
             if event.field == "messages":
-                await _handle_messages(session, tenant_id, value)
+                handled = await _handle_messages(session, tenant_id, value, attempts=event.attempts)
+                if not handled:
+                    event.last_error = "Status for a message not sent through XploWhatsApp."
             elif event.field == "message_template_status_update":
                 await _handle_template_status(session, tenant_id, account.id if account else None, value)
             elif event.field == "template_category_update":

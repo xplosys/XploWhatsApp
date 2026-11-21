@@ -406,6 +406,22 @@ async def test_status_before_send_result_is_retried(
     assert row["status"] == "pending" and row["attempts"] == 1 and "not found" in row["last_error"]
 
 
+async def test_status_for_message_sent_elsewhere_is_ignored_not_failed(
+    connected: tuple[Actor, dict[str, Any]], client: httpx.AsyncClient, su_conn: Any
+) -> None:
+    """Meta's API Setup page, the Business app and other integrations send messages we
+    never stored. Their statuses are retried briefly, then ignored."""
+    from app.modules.webhooks.processor import UNKNOWN_STATUS_ATTEMPTS, process_event
+
+    await deliver(client, status_update("wamid.ELSEWHERE", "delivered"))
+    row = await su_conn.fetchrow("SELECT id, tenant_id FROM webhook_events")
+    results = [await process_event(row["id"], row["tenant_id"]) for _ in range(UNKNOWN_STATUS_ATTEMPTS - 1)]
+    assert results[-2:] == ["retry", "ignored"]
+    row = await su_conn.fetchrow("SELECT status, attempts, last_error FROM webhook_events")
+    assert row["status"] == "ignored" and row["attempts"] == UNKNOWN_STATUS_ATTEMPTS
+    assert "not sent through XploWhatsApp" in row["last_error"]
+
+
 async def test_free_form_outside_window_requires_template(
     connected: tuple[Actor, dict[str, Any]], meta: FakeMeta
 ) -> None:
