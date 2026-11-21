@@ -22,7 +22,7 @@ from app.modules.ai.assistant import AssistantConfig
 from app.modules.ai.catalogue import CallRecord
 from app.modules.ai.models import ModelKind
 from app.modules.ai.prompt import REPLY_SCHEMA, Passage, customer_text, grounding_text, system_prompt
-from app.modules.ai.providers.base import GenerateRequest, ProviderError, Turn, Usage
+from app.modules.ai.providers.base import GenerateRequest, ProviderError, ProviderTimeout, Turn, Usage
 from app.modules.ai.validator import validate
 
 
@@ -135,7 +135,10 @@ async def _run(
     said = customer_text(turns)
     sources = [p.source() for p in knowledge]
     attempts: list[Attempt] = []
-    for step in steps:
+    for index, step in enumerate(steps):
+        # A timeout already cost the full wait; with another model to try, move on
+        # instead of making the customer wait the same time again.
+        has_fallback = any(later.key is not None for later in steps[index + 1 :])
         if step.key is None:
             attempts.append(Attempt(step.provider, step.model, "skipped", step.skip_reason))
             continue
@@ -157,7 +160,8 @@ async def _run(
                         int((time.monotonic() - started) * 1000),
                     )
                 )
-                if exc.retryable and attempt_no < settings.ai_attempts_per_provider:
+                retry = exc.retryable and not (isinstance(exc, ProviderTimeout) and has_fallback)
+                if retry and attempt_no < settings.ai_attempts_per_provider:
                     await asyncio.sleep(min(0.5 * attempt_no, 2.0))
                     continue
                 break

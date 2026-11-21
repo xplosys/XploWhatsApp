@@ -95,7 +95,7 @@ class FakeAI:
         self.queues[provider].append(("error", (status, message)))
 
     def special(self, provider: str, kind: str) -> None:
-        """kind: blocked | cut_off"""
+        """kind: blocked | cut_off | timeout"""
         self.queues[provider].append((kind, None))
 
     def calls(self, provider: str) -> list[dict[str, Any]]:
@@ -157,6 +157,8 @@ class FakeAI:
         if kind == "error":
             status, message = value
             return httpx.Response(status, json={"error": {"message": message}})
+        if kind == "timeout":
+            raise httpx.ReadTimeout("timed out", request=request)
         return getattr(self, f"_{provider}")(body, kind, value)
 
     def _embed(self, provider: str, request: httpx.Request, body: dict[str, Any]) -> httpx.Response:
