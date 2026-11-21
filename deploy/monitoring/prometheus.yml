@@ -22,7 +22,7 @@ scrape_configs:
 
   - job_name: worker
     static_configs:
-      - targets: ["worker:9808"]
+      - targets: ["worker:9808", "worker-ai:9808"]
 
   - job_name: node
     static_configs:

@@ -37,6 +37,9 @@ def redact_processor(
     return event_dict
 
 
+QUIET_HTTP_LOGGERS = ("httpx", "httpcore")
+
+
 def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
     shared: list[Any] = [
         structlog.contextvars.merge_contextvars,
@@ -52,6 +55,10 @@ def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
         cache_logger_on_first_use=True,
     )
     logging.basicConfig(level=level, stream=sys.stdout, format="%(message)s")
+    # httpx logs every request's full URL at INFO, query string included. Meta's
+    # OAuth and debug_token calls carry the app secret there, so keep those quiet.
+    for name in QUIET_HTTP_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str | None = None) -> Any:

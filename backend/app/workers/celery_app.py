@@ -37,8 +37,12 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
     task_default_queue="default",
-    # Queues for later phases are declared now so deployments do not change shape.
+    # The first matching entry wins. AI calls wait seconds on the provider, so they get
+    # their own queue and worker pool (worker-ai in production): webhooks and outgoing
+    # messages never queue behind them, and AI capacity is sized on its own.
     task_routes={
+        "app.workers.tasks.messages.ai_auto_reply": {"queue": "ai"},
+        "app.workers.tasks.messages.summarise_conversation": {"queue": "ai"},
         "app.workers.tasks.notifications.*": {"queue": "default"},
         "app.workers.tasks.maintenance.*": {"queue": "default"},
         "app.workers.tasks.whatsapp.*": {"queue": "default"},

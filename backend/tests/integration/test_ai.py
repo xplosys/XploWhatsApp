@@ -387,6 +387,24 @@ async def test_fallback_after_provider_errors(clinic: Actor, client: httpx.Async
     assert calls[2].dimensions["output_tokens"] == 100 and calls[2].cost_source == "unpriced"
 
 
+async def test_timeout_moves_to_the_fallback_without_retrying(
+    clinic: Actor, client: httpx.AsyncClient, ai: FakeAI
+) -> None:
+    """A timeout already made the customer wait; the next model is tried at once. The
+    last model in the chain still gets its retry."""
+    await setup_assistant(clinic, config(("openai", "gpt-test-mini"), ("gemini", "gemini-test-flash")))
+    ai.special("openai", "timeout")
+    ai.special("gemini", "timeout")
+    ai.reply("gemini", "We open at 9am.")
+    await deliver(client, inbound_text("When do you open?"))
+    [msg] = await ai_messages(clinic.tenant_id)
+    assert [(a["provider"], a["outcome"]) for a in msg.ai_provenance["attempts"]] == [
+        ("openai", "provider_timeout"),
+        ("gemini", "provider_timeout"),
+        ("gemini", "ok"),
+    ]
+
+
 async def test_every_adapter_maps_blocked_and_cut_off_answers(
     clinic: Actor, client: httpx.AsyncClient, ai: FakeAI
 ) -> None:

@@ -1,0 +1,15 @@
+{
+  "name": "xplowhatsapp-e2e",
+  "private": true,
+  "description": "End-to-end tests: the whole product in a real browser, against fake Meta and AI services.",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.19.1",
+    "typescript": "5.9.3"
+  },
+  "packageManager": "pnpm@10.28.0"
+}

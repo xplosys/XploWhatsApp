@@ -52,6 +52,7 @@ The client IP comes from `X-Real-IP` only when the connection comes from an addr
 - Postgres row-level security isolates every tenant table. The app role cannot bypass it. Platform-wide jobs use narrow `SECURITY DEFINER` functions, and the Super Admin uses a separate role.
 - Secrets are encrypted with a per-secret data key wrapped by a versioned key-encryption key (`ENCRYPTION_KEYS`). The associated data binds each secret to its business and purpose, so a ciphertext copied to another row does not decrypt.
 - The audit log is append-only for the app role. Every route that changes data is either audited or listed with a reason in `tests/integration/test_audit_coverage.py`, and a new route fails that test until it is classified.
+- Access logs never hold query strings, which can carry tokens such as Meta's webhook verify token. In production Nginx writes the access log without them, and uvicorn's own access log is off.
 
 ### Uploads
 

@@ -406,6 +406,22 @@ async def test_status_before_send_result_is_retried(
     assert row["status"] == "pending" and row["attempts"] == 1 and "not found" in row["last_error"]
 
 
+async def test_status_for_message_sent_elsewhere_is_ignored_not_failed(
+    connected: tuple[Actor, dict[str, Any]], client: httpx.AsyncClient, su_conn: Any
+) -> None:
+    """Meta's API Setup page, the Business app and other integrations send messages we
+    never stored. Their statuses are retried briefly, then ignored."""
+    from app.modules.webhooks.processor import UNKNOWN_STATUS_ATTEMPTS, process_event
+
+    await deliver(client, status_update("wamid.ELSEWHERE", "delivered"))
+    row = await su_conn.fetchrow("SELECT id, tenant_id FROM webhook_events")
+    results = [await process_event(row["id"], row["tenant_id"]) for _ in range(UNKNOWN_STATUS_ATTEMPTS - 1)]
+    assert results[-2:] == ["retry", "ignored"]
+    row = await su_conn.fetchrow("SELECT status, attempts, last_error FROM webhook_events")
+    assert row["status"] == "ignored" and row["attempts"] == UNKNOWN_STATUS_ATTEMPTS
+    assert "not sent through XploWhatsApp" in row["last_error"]
+
+
 async def test_free_form_outside_window_requires_template(
     connected: tuple[Actor, dict[str, Any]], meta: FakeMeta
 ) -> None:
@@ -529,6 +545,20 @@ async def test_send_retries_transient_errors_then_fails_permanent(
     assert await run_jobs() == ["failed"]
     out = (await owner.get(f"{API}/conversations/{conv['id']}/messages")).json()["items"][-1]
     assert out["status"] == "failed" and out["error_code"] == "131026"
+
+
+async def test_access_denied_on_send_marks_account_needs_reconnect(
+    connected: tuple[Actor, dict[str, Any]], client: httpx.AsyncClient, meta: FakeMeta
+) -> None:
+    """131005 is what Meta returns when the token in use was replaced or lost access."""
+    owner, account = connected
+    await deliver(client, inbound_text("Hello"))
+    conv = (await owner.get(f"{API}/conversations")).json()["items"][0]
+    meta.fail(r"POST /\d+/messages", 403, 131005, "Access denied")
+    await owner.post(f"{API}/conversations/{conv['id']}/messages", json={"text": "one"})
+    assert await run_jobs() == ["failed"]
+    acc = (await owner.get(f"{API}/whatsapp/accounts/{account['id']}")).json()
+    assert acc["status"] == "needs_reconnect"
 
 
 async def test_token_revoked_marks_account_needs_reconnect(
@@ -661,3 +691,29 @@ async def test_webhook_rows_are_tenant_scoped(
         assert len((await s.execute(select(WebhookEvent))).scalars().all()) == 1
     async with app_transaction(uuid.uuid4()) as s:
         assert (await s.execute(select(WebhookEvent))).scalars().all() == []
+
+
+async def test_test_number_can_be_connected_with_a_token_in_development(
+    register: RegisterFn, meta: FakeMeta, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`python -m app.cli connect-test-number`: Meta's test number before business
+    verification. Same token checks as Embedded Signup; the number is not re-registered."""
+    from app.cli import _connect_test_number
+    from app.core.config import Environment, get_settings
+    from app.core.errors import ValidationFailed
+
+    owner = await register("owner@lotusphysio.in", "Lotus Physiotherapy")
+    meta.token_valid = False
+    with pytest.raises(ValidationFailed):
+        await _connect_test_number("owner@lotusphysio.in", WABA_ID, PHONE_NUMBER_ID, BUSINESS_TOKEN)
+    meta.token_valid = True
+
+    name = await _connect_test_number("owner@lotusphysio.in", WABA_ID, PHONE_NUMBER_ID, BUSINESS_TOKEN)
+    assert name == "Sunrise Dental WABA"
+    [account] = (await owner.get(f"{API}/whatsapp/accounts")).json()
+    assert account["status"] == "connected" and account["numbers"][0]["status"] == "connected"
+    assert meta.subscribed and not meta.registered
+
+    monkeypatch.setattr(get_settings(), "environment", Environment.PRODUCTION)
+    with pytest.raises(ValidationFailed):
+        await _connect_test_number("owner@lotusphysio.in", WABA_ID, PHONE_NUMBER_ID, BUSINESS_TOKEN)

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -38,6 +38,7 @@ from app.modules.conversations.models import (
     Contact,
     Conversation,
     Direction,
+    HandoverSession,
     HandoverStarter,
     Message,
     SenderType,
@@ -93,14 +94,22 @@ def _turn(message: Message) -> Turn | None:
 
 
 async def history(session: AsyncSession, conversation_id: uuid.UUID) -> list[Turn]:
+    """The recent messages the assistant answers from. When the team handed the
+    conversation back, it starts there: what came before was dealt with by a person,
+    and an old "let me speak to someone" would otherwise hand it over again."""
     settings = get_settings()
+    handed_back = await session.scalar(
+        select(func.max(HandoverSession.released_at)).where(
+            HandoverSession.conversation_id == conversation_id
+        )
+    )
+    query = select(Message).where(Message.conversation_id == conversation_id)
+    if handed_back is not None:
+        query = query.where(Message.created_at > handed_back)
     rows = list(
         (
             await session.execute(
-                select(Message)
-                .where(Message.conversation_id == conversation_id)
-                .order_by(Message.created_at.desc())
-                .limit(settings.ai_history_messages)
+                query.order_by(Message.created_at.desc()).limit(settings.ai_history_messages)
             )
         ).scalars()
     )
@@ -279,6 +288,12 @@ async def _deliver(
         )
     except AppError as exc:
         log.warning("ai_reply_blocked", conversation_id=str(conversation_id), code=exc.code)
+        if exc.code in ACCOUNT_BLOCKS:
+            # Nobody could send from this number right now, a person included. Turning
+            # the assistant off would leave the customer unanswered after the account is
+            # reconnected, so the conversation stays with the assistant. The account's
+            # health alert tells the business what to fix.
+            return f"blocked:{exc.code}"
         await _hand_over(
             session,
             conversation,
@@ -302,6 +317,10 @@ async def _deliver(
     if job is not None:
         run_after_commit(session, lambda: outbound.dispatch_job(job))
     return "handover" if outcome.kind == "handover" else "replied"
+
+
+# Policy denials about the WhatsApp account or number rather than the conversation.
+ACCOUNT_BLOCKS = frozenset({"account_needs_reconnect", "account_not_connected", "number_not_connected"})
 
 
 def _hits(outcome: Outcome) -> int | None:

@@ -2,7 +2,7 @@
 
 AI-powered WhatsApp customer engagement and automation platform by XploSys. Multi-tenant SaaS built on the official Meta WhatsApp Cloud API.
 
-**Status:** Phases 1 to 9 complete: foundation, WhatsApp, AI assistant, knowledge base, conversation management, customer dashboard, billing, security hardening, and monitoring and deployment. Phases 7 to 9 are awaiting review. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+**Status:** Phases 1 to 10 complete: foundation, WhatsApp, AI assistant, knowledge base, conversation management, customer dashboard, billing, security hardening, monitoring and deployment, and production testing. Phases 7 to 10 are awaiting review. Going live needs Meta App Review (docs/LAUNCH_CHECKLIST.md). See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): system design, diagrams, data model, security decisions
 - [docs/META_INTEGRATION.md](docs/META_INTEGRATION.md): Meta setup, approvals and onboarding sequence
@@ -13,6 +13,8 @@ AI-powered WhatsApp customer engagement and automation platform by XploSys. Mult
 - [docs/BILLING.md](docs/BILLING.md): plans and prices, Razorpay and Stripe, webhooks, plan changes and seats, GST invoices
 - [docs/SECURITY.md](docs/SECURITY.md): threat model, controls, key rotation, incident response, pen-test checklist, DPDP/GDPR data tools
 - [docs/DEPLOYMENT_UBUNTU.md](docs/DEPLOYMENT_UBUNTU.md): production server setup, TLS, deploys from GitHub, backups and restore, monitoring and alerts
+- [docs/LAUNCH_CHECKLIST.md](docs/LAUNCH_CHECKLIST.md): go-live steps, Meta App Review submission pack, capacity figures and rollback
+- [e2e/README.md](e2e/README.md): end-to-end tests in a real browser, and load tests
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md): phased plan
 
 Stack: Python 3.12, FastAPI, SQLAlchemy 2, Alembic, Celery, PostgreSQL 17 + pgvector, Redis, Next.js 16 + TypeScript + Tailwind CSS 4, Docker Compose.
@@ -56,7 +58,7 @@ docker compose run --rm api python -m app.cli create-super-admin you@xplosys.com
 cd backend && uv sync
 uv run python -m app.cli bootstrap-db && uv run alembic upgrade head && uv run python -m app.cli seed
 uv run uvicorn app.main:app --reload
-uv run celery -A app.workers.celery_app worker -Q default,messages,knowledge
+uv run celery -A app.workers.celery_app worker -Q default,messages,knowledge,ai
 
 # Frontend (proxies /api to http://localhost:8000)
 cd frontend && pnpm install && pnpm dev
@@ -70,10 +72,14 @@ cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy
 cd frontend && pnpm lint && pnpm typecheck && pnpm build
 ```
 
+End-to-end tests (the whole product in a browser, against fake Meta and AI services) and load tests: see [e2e/README.md](e2e/README.md).
+
 ## Layout
 
 ```
 backend/   FastAPI app (app/), Alembic migrations, Celery workers, tests
 frontend/  Next.js dashboard (App Router)
+e2e/       End-to-end tests (Playwright), fake Meta and AI services, load tests (k6)
+deploy/    Production config: Nginx, monitoring, backup and deploy scripts
 docs/      Architecture, Meta integration, plan
 ```

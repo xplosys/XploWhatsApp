@@ -104,4 +104,12 @@ Then in the App Dashboard:
 
 The WhatsApp page in the app lists any missing setting instead of offering a Connect button that cannot work.
 
+**Before business verification (development only).** Meta refuses Embedded Signup ("can't onboard customers right now") until the business is verified. To test real messaging before then, connect the app's own test number from WhatsApp → API Setup: add your phone as a recipient there, generate an access token, then run
+
+```bash
+docker compose exec api python -m app.cli connect-test-number <owner email> <WhatsApp Business Account ID> <phone number ID>
+```
+
+and paste the token when asked. It runs the same token, account and webhook-subscription checks as Embedded Signup, skips registration (test numbers come registered) and is refused outside development. The API Setup token lasts about 24 hours; run the command again with a fresh one when it expires.
+
 Endpoints XploWhatsApp calls: `GET /oauth/access_token`, `GET /debug_token`, `GET /{waba_id}`, `GET /{waba_id}/phone_numbers`, `POST|GET|DELETE /{waba_id}/subscribed_apps`, `POST /{phone_number_id}/register`, `POST /{phone_number_id}/messages`, `GET /{waba_id}/message_templates`.
