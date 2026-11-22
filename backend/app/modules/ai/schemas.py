@@ -95,6 +95,8 @@ class PreviewOut(BaseModel):
     attempts: list[AttemptOut]
     sources: list[dict[str, Any]] = []
     retrieval: dict[str, Any] | None = None
+    # The appointment action the assistant asked for. A preview never books anything.
+    booking: dict[str, Any] | None = None
 
 
 class UsageRow(BaseModel):

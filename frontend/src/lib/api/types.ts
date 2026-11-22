@@ -837,3 +837,82 @@ export interface AdminPlan {
   subscribers: number;
   prices: AdminPlanPrice[];
 }
+
+// ---- appointments ----------------------------------------------------------------
+
+export type WeeklyHours = Partial<Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", [string, string][]>>;
+
+export interface BookingSettings {
+  ai_booking_enabled: boolean;
+  horizon_days: number;
+  min_notice_minutes: number;
+  max_upcoming_per_contact: number;
+  confirmation_note: string;
+  reminders_enabled: boolean;
+  reminder_hours_before: number;
+  reminder_template_name: string | null;
+  reminder_template_language: string | null;
+  timezone: string;
+  active_resources: number;
+}
+
+export interface BookableResource {
+  id: string;
+  name: string;
+  department: string;
+  description: string;
+  slot_minutes: number;
+  capacity: number;
+  weekly_hours: WeeklyHours;
+  active: boolean;
+  upcoming: number;
+  created_at: string;
+}
+
+export interface TimeOff {
+  id: string;
+  resource_id: string | null;
+  resource_name: string | null;
+  starts_on: string;
+  ends_on: string;
+  reason: string;
+}
+
+export type AppointmentStatus = "confirmed" | "cancelled" | "completed" | "no_show";
+
+export interface Appointment {
+  id: string;
+  reference: string;
+  resource: { id: string; name: string; department: string };
+  contact: { id: string; name: string | null; phone_e164: string | null };
+  conversation_id: string | null;
+  patient_name: string;
+  starts_at: string;
+  ends_at: string;
+  local_start: string;
+  status: AppointmentStatus;
+  source: "ai" | "staff";
+  notes: string;
+  created_by: UserRef | null;
+  cancelled_at: string | null;
+  cancelled_by: "customer" | "staff" | null;
+  reminder_status: "sent" | "failed" | "skipped" | null;
+  reminder_detail: string | null;
+  reminder_sent_at: string | null;
+  created_at: string;
+}
+
+export interface AppointmentResult extends Appointment {
+  notified: boolean | null;
+  notify_error: string | null;
+}
+
+export interface AppointmentList {
+  items: Appointment[];
+  timezone: string;
+}
+
+export interface ResourceAvailability {
+  resource_id: string;
+  days: { date: string; times: string[] }[];
+}

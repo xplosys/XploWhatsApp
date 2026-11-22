@@ -255,6 +255,28 @@ INSERTS: dict[str, Callable[[uuid.UUID, uuid.UUID, uuid.UUID], tuple[str, dict[s
         "VALUES (:id, :t, 'stripe', :ref, 'invoice.paid', '{}', 'pending', 0)",
         {"id": uuid.uuid4(), "t": t, "ref": f"evt_{uuid.uuid4().hex}"},
     ),
+    "booking_settings": lambda t, u, p: (
+        "INSERT INTO booking_settings (id, tenant_id, ai_booking_enabled, horizon_days, min_notice_minutes, "
+        "max_upcoming_per_contact, confirmation_note, reminders_enabled, reminder_hours_before) "
+        "VALUES (:id, :t, true, 14, 0, 3, '', false, 24)",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "booking_resources": lambda t, u, p: (
+        "INSERT INTO booking_resources (id, tenant_id, name, department, description, slot_minutes, capacity, "
+        "weekly_hours, active) VALUES (:id, :t, 'Dr Evil', '', '', 30, 1, '{}', true)",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "booking_time_off": lambda t, u, p: (
+        "INSERT INTO booking_time_off (id, tenant_id, starts_on, ends_on, reason) "
+        "VALUES (:id, :t, current_date, current_date, '')",
+        {"id": uuid.uuid4(), "t": t},
+    ),
+    "appointments": lambda t, u, p: (
+        "INSERT INTO appointments (id, tenant_id, resource_id, contact_id, reference, patient_name, starts_at, "
+        "ends_at, status, source, notes, times_moved) VALUES (:id, :t, :id, :id, 'EVIL22', 'X', now(), "
+        "now() + interval '30 minutes', 'confirmed', 'staff', '', 0)",
+        {"id": uuid.uuid4(), "t": t},
+    ),
     "data_exports": lambda t, u, p: (
         "INSERT INTO data_exports (id, tenant_id, status) VALUES (:id, :t, 'queued')",
         {"id": uuid.uuid4(), "t": t},
@@ -406,6 +428,7 @@ async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
             ),
             {"p": price},
         )
+    resource = uuid.uuid4()
     statements += [
         ("INSERT INTO data_exports (id, tenant_id, status) VALUES (gen_random_uuid(), :t, 'ready')", {}),
         (
@@ -435,6 +458,28 @@ async def _seed_whatsapp_rows(tenant_id: uuid.UUID) -> None:
             "INSERT INTO billing_events (id, tenant_id, gateway, event_id, type, payload, status, attempts) "
             "VALUES (gen_random_uuid(), :t, 'razorpay', 'evt_seed', 'subscription.charged', '{}', 'processed', 1)",
             {},
+        ),
+        (
+            "INSERT INTO booking_settings (id, tenant_id, ai_booking_enabled, horizon_days, min_notice_minutes, "
+            "max_upcoming_per_contact, confirmation_note, reminders_enabled, reminder_hours_before) "
+            "VALUES (gen_random_uuid(), :t, true, 14, 60, 3, '', true, 24)",
+            {},
+        ),
+        (
+            "INSERT INTO booking_resources (id, tenant_id, name, department, description, slot_minutes, capacity, "
+            "weekly_hours, active) VALUES (:res, :t, 'Dr Two', 'OPD', '', 30, 1, '{}', true)",
+            {"res": resource},
+        ),
+        (
+            "INSERT INTO booking_time_off (id, tenant_id, resource_id, starts_on, ends_on, reason) "
+            "VALUES (gen_random_uuid(), :t, :res, current_date, current_date, 'Leave')",
+            {"res": resource},
+        ),
+        (
+            "INSERT INTO appointments (id, tenant_id, resource_id, contact_id, reference, patient_name, starts_at, "
+            "ends_at, status, source, notes, times_moved) VALUES (gen_random_uuid(), :t, :res, :contact, 'SEED22', "
+            "'Kabir', now() + interval '1 day', now() + interval '1 day 30 minutes', 'confirmed', 'ai', '', 0)",
+            {"res": resource},
         ),
     ]
     async with app_transaction(tenant_id) as s:

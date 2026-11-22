@@ -18,6 +18,7 @@ const NAV = [
   { href: "/dashboard", label: "Overview" },
   { href: "/conversations", label: "Conversations", permission: "conversations:read" },
   { href: "/contacts", label: "Contacts", permission: "conversations:read" },
+  { href: "/appointments", label: "Appointments", permission: "appointments:manage" },
   { href: "/leads", label: "Leads", permission: "leads:manage" },
   { href: "/analytics", label: "Analytics", permission: "analytics:read" },
   { href: "/whatsapp", label: "WhatsApp", permission: "whatsapp:read" },

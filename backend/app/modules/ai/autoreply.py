@@ -31,6 +31,7 @@ from app.modules.ai.catalogue import CallRecord
 from app.modules.ai.orchestrator import ChainStep, Outcome
 from app.modules.ai.prompt import Passage, fit_passages, trim_history
 from app.modules.ai.providers.base import Turn
+from app.modules.appointments import service as appointments
 from app.modules.billing.service import effective_plan
 from app.modules.conversations import inbox, outbound
 from app.modules.conversations.models import (
@@ -151,6 +152,7 @@ class Prepared:
     contact_id: uuid.UUID
     retrieval: retrieval.RetrievalPlan | str = "not_configured"
     extra_calls: list[CallRecord] = field(default_factory=list)
+    booking: appointments.BookingContext | None = None
 
 
 async def _hand_over(
@@ -228,6 +230,7 @@ async def _prepare(
         number_id=conversation.number_id,
         contact_id=conversation.contact_id,
         retrieval=await retrieval.plan_for(session, tenant_id),
+        booking=await appointments.ai_context(session, tenant, conversation.contact_id),
     )
 
 
@@ -273,7 +276,30 @@ async def _deliver(
         return "superseded"  # a newer message arrived while the model was thinking
     if not conversation.ai_enabled:
         return "ai_off"  # an agent took over meanwhile
-    provenance = {**outcome.provenance(), "reply_to": str(trigger_id)}
+    provenance: dict[str, object] = {**outcome.provenance(), "reply_to": str(trigger_id)}
+    text = outcome.text
+    # Booking and the message that reports it stand or fall together: if the message
+    # cannot be queued, the appointment is not kept either.
+    savepoint = None
+    if outcome.kind == "reply" and outcome.booking is not None and prepared.booking is not None:
+        savepoint = await session.begin_nested()
+        tenant = await session.get(Tenant, tenant_id)
+        assert tenant is not None
+        try:
+            action = await appointments.apply_ai_action(
+                session, tenant, conversation, prepared.booking, outcome.booking, reply=outcome.text
+            )
+        except AppError as exc:  # e.g. the doctor was removed while the model was answering
+            await savepoint.rollback()
+            savepoint = await session.begin_nested()
+            action = appointments.ActionResult(
+                False,
+                "Sorry, I couldn't complete that just now. "
+                "Please try again, or ask for a member of our team.",
+                {"action": outcome.booking.action, "result": exc.code},
+            )
+        text = action.text
+        provenance["booking"] = action.details
     try:
         msg = await outbound.queue_message(
             session,
@@ -281,12 +307,14 @@ async def _deliver(
             outbound.OutboundRequest(
                 number_id=prepared.number_id,
                 contact_id=prepared.contact_id,
-                text=outcome.text,
+                text=text,
                 sender_type=SenderType.AI,
                 ai_provenance=provenance,
             ),
         )
     except AppError as exc:
+        if savepoint is not None:
+            await savepoint.rollback()
         log.warning("ai_reply_blocked", conversation_id=str(conversation_id), code=exc.code)
         if exc.code in ACCOUNT_BLOCKS:
             # Nobody could send from this number right now, a person included. Turning
@@ -303,6 +331,8 @@ async def _deliver(
             retrieval_hits=_hits(outcome),
         )
         return f"blocked:{exc.code}"
+    if savepoint is not None:
+        await savepoint.commit()
     await catalogue.record_reply(session, tenant_id, conversation_id)
     if outcome.kind == "handover":
         await _hand_over(
@@ -316,7 +346,10 @@ async def _deliver(
     job = await outbound.outbox_job_for(session, msg.id)
     if job is not None:
         run_after_commit(session, lambda: outbound.dispatch_job(job))
-    return "handover" if outcome.kind == "handover" else "replied"
+    if outcome.kind == "handover":
+        return "handover"
+    booking = provenance.get("booking")
+    return f"booking:{booking['result']}" if isinstance(booking, dict) else "replied"
 
 
 # Policy denials about the WhatsApp account or number rather than the conversation.
@@ -350,6 +383,7 @@ async def reply(conversation_id: uuid.UUID, tenant_id: uuid.UUID, trigger_id: uu
             turns=prepared.turns,
             knowledge=knowledge,
             retrieval=retrieval_info,
+            booking=prepared.booking,
         )
         async with app_transaction(tenant_id) as session:
             result = await _deliver(session, tenant_id, conversation_id, trigger_id, prepared, outcome)

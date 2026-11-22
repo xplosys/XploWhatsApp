@@ -1,7 +1,7 @@
 # XploWhatsApp — project status
 
 **Last updated:** 2026-11-13
-**Current phase:** Phase 10 complete (production testing and release). All ten phases are built; launch waits on review and Meta App Review
+**Current phase:** Phase 11 (WhatsApp appointment booking) awaiting review. Phase 10 complete (production testing and release). All ten phases are built; launch waits on review and Meta App Review
 
 ## Phase tracker
 
@@ -18,6 +18,7 @@
 | 8. Security hardening | Done, awaiting review (PR #8) | See Phase 8 report and docs/SECURITY.md |
 | 9. Monitoring and deployment | Done, awaiting review (PR #9) | See Phase 9 report and docs/DEPLOYMENT_UBUNTU.md |
 | 10. Production testing and release | Done, awaiting review (PR #10) | See Phase 10 report, docs/LAUNCH_CHECKLIST.md and e2e/README.md |
+| 11. Appointment booking | Done, awaiting review | The assistant books, moves and cancels appointments; calendar, doctors, hours, leave, reminders. See docs/APPOINTMENTS.md |
 
 ## Phase 10 report
 

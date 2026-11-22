@@ -30,6 +30,10 @@ class Permission(StrEnum):
     CONVERSATIONS_ASSIGN = "conversations:assign"
     CONTACTS_MANAGE = "contacts:manage"
     LEADS_MANAGE = "leads:manage"
+    # See the appointment calendar, book, cancel and mark appointments done.
+    APPOINTMENTS_MANAGE = "appointments:manage"
+    # Doctors and services, their hours, days off, and the booking settings.
+    APPOINTMENTS_CONFIGURE = "appointments:configure"
     ANALYTICS_READ = "analytics:read"
     # Erase a customer's data on request (DPDP Act / GDPR right to erasure).
     PRIVACY_MANAGE = "privacy:manage"
@@ -46,6 +50,7 @@ _AGENT = {
     Permission.CONVERSATIONS_REPLY,
     Permission.CONTACTS_MANAGE,
     Permission.LEADS_MANAGE,
+    Permission.APPOINTMENTS_MANAGE,
 }
 _SUPERVISOR = _AGENT | {Permission.CONVERSATIONS_ASSIGN, Permission.ANALYTICS_READ}
 _ADMIN = _SUPERVISOR | {
@@ -58,6 +63,7 @@ _ADMIN = _SUPERVISOR | {
     Permission.AI_CONFIGURE,
     Permission.KNOWLEDGE_MANAGE,
     Permission.PRIVACY_MANAGE,
+    Permission.APPOINTMENTS_CONFIGURE,
 }
 _OWNER = _ADMIN | {Permission.BILLING_MANAGE, Permission.SECURITY_MANAGE}
 

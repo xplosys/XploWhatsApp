@@ -557,6 +557,7 @@ async def test_preview_runs_draft_settings_without_sending(clinic: Actor, ai: Fa
         "attempts": [],
         "sources": [],
         "retrieval": {"hits": 0, "status": "not_configured"},
+        "booking": None,
     }
     assert meta.sent == []
     [record] = await usage(clinic.tenant_id)

@@ -34,12 +34,52 @@ EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 URL_RE = re.compile(r"(?:https?://|www\.)[^\s)>\]]+", re.I)
 
 
+BOOKING_ACTIONS = ("none", "book", "cancel", "reschedule")
+
+
+@dataclass(frozen=True)
+class BookingRequest:
+    """What the assistant asked the system to do with an appointment. Nothing here is
+    trusted: the appointments service checks every field before acting."""
+
+    action: str = "none"
+    resource: str = ""
+    date: str = ""
+    time: str = ""
+    patient_name: str = ""
+    reference: str = ""
+    notes: str = ""
+
+
+def _booking(data: object) -> BookingRequest | None:
+    if not isinstance(data, dict):
+        return None
+    action = str(data.get("action") or "none").strip().lower()
+    if action not in BOOKING_ACTIONS or action == "none":
+        return None
+
+    def text(key: str, limit: int) -> str:
+        value = data.get(key)
+        return str(value).strip()[:limit] if isinstance(value, str | int | float) else ""
+
+    return BookingRequest(
+        action=action,
+        resource=text("resource", 20),
+        date=text("date", 20),
+        time=text("time", 20),
+        patient_name=text("patient_name", 120),
+        reference=text("reference", 20),
+        notes=text("notes", 500),
+    )
+
+
 @dataclass
 class Verdict:
     kind: Literal["reply", "handover", "invalid"]
     text: str = ""
     out_of_scope: bool = False
     issues: list[str] = field(default_factory=list)
+    booking: BookingRequest | None = None
 
 
 def _parse(raw: str) -> dict[str, object] | None:
@@ -153,4 +193,9 @@ def validate(raw: str, *, max_chars: int, grounding: str, customer: str = "") ->
     facts = ungrounded_facts(visible, grounding, customer)
     if facts:
         return Verdict("invalid", issues=[f"ungrounded: {', '.join(facts)}"])
-    return Verdict("handover" if needs_human else "reply", text=reply, out_of_scope=out_of_scope)
+    return Verdict(
+        "handover" if needs_human else "reply",
+        text=reply,
+        out_of_scope=out_of_scope,
+        booking=None if needs_human else _booking(data.get("booking")),
+    )

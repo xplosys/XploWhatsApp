@@ -83,9 +83,19 @@ class FakeAI:
     embed_dimensions: int | None = None  # override to simulate a model with the wrong size
 
     def reply(
-        self, provider: str, text: str, *, needs_human: bool = False, out_of_scope: bool = False
+        self,
+        provider: str,
+        text: str,
+        *,
+        needs_human: bool = False,
+        out_of_scope: bool = False,
+        booking: dict[str, str] | None = None,
     ) -> None:
-        payload = json.dumps({"reply": text, "needs_human": needs_human, "out_of_scope": out_of_scope})
+        answer: dict[str, Any] = {"reply": text, "needs_human": needs_human, "out_of_scope": out_of_scope}
+        if booking is not None:
+            empty = dict.fromkeys(("resource", "date", "time", "patient_name", "reference", "notes"), "")
+            answer["booking"] = {"action": "none", **empty, **booking}
+        payload = json.dumps(answer)
         self.queues[provider].append(("text", payload))
 
     def raw(self, provider: str, text: str) -> None:
