@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated
@@ -46,6 +47,7 @@ from app.modules.ai.schemas import (
     UsageRow,
     VersionOut,
 )
+from app.modules.appointments import service as appointments
 from app.modules.audit.service import record
 from app.modules.billing.service import effective_plan
 from app.modules.knowledge import retrieval
@@ -344,6 +346,7 @@ async def preview(body: PreviewIn, ctx: Configurer) -> PreviewOut:
         if found.call is not None:
             await catalogue.record_call(ctx.session, ctx.tenant_id, found.call)
         knowledge, retrieval_info = fit_passages(found.passages), found.summary
+    booking = await appointments.ai_context(ctx.session, ctx.tenant, None)
     outcome = await orchestrator.run(
         steps,
         config,
@@ -352,6 +355,7 @@ async def preview(body: PreviewIn, ctx: Configurer) -> PreviewOut:
         turns=turns,
         knowledge=knowledge,
         retrieval=retrieval_info,
+        booking=booking,
     )
     for call in orchestrator.call_records(outcome, purpose="preview"):
         await catalogue.record_call(ctx.session, ctx.tenant_id, call)
@@ -368,6 +372,7 @@ async def preview(body: PreviewIn, ctx: Configurer) -> PreviewOut:
         ],
         sources=outcome.sources,
         retrieval=outcome.retrieval,
+        booking=dataclasses.asdict(outcome.booking) if outcome.booking else None,
     )
 
 

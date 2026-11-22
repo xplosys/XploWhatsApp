@@ -11,7 +11,7 @@ import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +23,14 @@ from app.modules.ai.catalogue import CallRecord
 from app.modules.ai.models import ModelKind
 from app.modules.ai.prompt import REPLY_SCHEMA, Passage, customer_text, grounding_text, system_prompt
 from app.modules.ai.providers.base import GenerateRequest, ProviderError, ProviderTimeout, Turn, Usage
-from app.modules.ai.validator import validate
+from app.modules.ai.validator import BookingRequest, validate
+
+
+class BookingPrompt(Protocol):
+    """The appointments section for the prompt and the times a reply may mention."""
+
+    prompt: str
+    grounding: str
 
 
 @dataclass(frozen=True)
@@ -56,6 +63,8 @@ class Outcome:
     attempts: list[Attempt] = field(default_factory=list)
     sources: list[dict[str, object]] = field(default_factory=list)
     retrieval: dict[str, object] | None = None
+    # An appointment action the assistant asked for (only when booking was offered).
+    booking: BookingRequest | None = None
 
     def provenance(self) -> dict[str, object]:
         return {
@@ -97,6 +106,7 @@ async def run(
     turns: list[Turn],
     knowledge: Sequence[Passage] = (),
     retrieval: dict[str, object] | None = None,
+    booking: BookingPrompt | None = None,
 ) -> Outcome:
     outcome = await _run(
         steps,
@@ -106,6 +116,7 @@ async def run(
         turns=turns,
         knowledge=knowledge,
         retrieval=retrieval,
+        booking=booking,
     )
     metrics.observe_ai(outcome.attempts)
     return outcome
@@ -120,18 +131,25 @@ async def _run(
     turns: list[Turn],
     knowledge: Sequence[Passage] = (),
     retrieval: dict[str, object] | None = None,
+    booking: BookingPrompt | None = None,
 ) -> Outcome:
     settings = get_settings()
     request_base = GenerateRequest(
         model="",
         system=system_prompt(
-            config, business_name=business_name, default_language=default_language, knowledge=knowledge
+            config,
+            business_name=business_name,
+            default_language=default_language,
+            knowledge=knowledge,
+            booking=booking.prompt if booking else None,
         ),
         turns=turns,
         max_output_tokens=settings.ai_max_output_tokens,
         response_schema=REPLY_SCHEMA,
     )
     grounding = grounding_text(config, knowledge)
+    if booking is not None:
+        grounding += "\n" + booking.grounding  # free times and the customer's own appointments
     said = customer_text(turns)
     sources = [p.source() for p in knowledge]
     attempts: list[Attempt] = []
@@ -206,6 +224,7 @@ async def _run(
                 attempts,
                 sources,
                 retrieval,
+                verdict.booking if booking is not None else None,
             )
     return Outcome(
         "handover",

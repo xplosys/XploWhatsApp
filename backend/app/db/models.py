@@ -8,6 +8,7 @@ from app.modules.ai.models import (
     AssistantVersion,
     UsageRecord,
 )
+from app.modules.appointments.models import Appointment, BookableResource, BookingSettings, TimeOff
 from app.modules.audit.models import AuditLog
 from app.modules.auth.models import RefreshToken, User, UserActionToken
 from app.modules.billing.models import (
@@ -47,11 +48,14 @@ __all__ = [
     "AIModel",
     "AIModelPrice",
     "AIProviderConfig",
+    "Appointment",
     "Assistant",
     "AssistantVersion",
     "AuditLog",
     "BillingEvent",
     "BillingProfile",
+    "BookableResource",
+    "BookingSettings",
     "Checkout",
     "Contact",
     "Conversation",
@@ -78,6 +82,7 @@ __all__ = [
     "Tenant",
     "TenantInvitation",
     "TenantMembership",
+    "TimeOff",
     "Transaction",
     "UnansweredQuestion",
     "UsageRecord",
