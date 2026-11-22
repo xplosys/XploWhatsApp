@@ -45,6 +45,11 @@ class AssistantConfig(BaseModel):
     summary_on_handover: bool = Field(
         default=True, description="Write a short summary for staff when the assistant hands over."
     )
+    appointment_requests: bool = Field(
+        default=False,
+        description="Take appointment requests (name, service, date, time) without handing over; "
+        "each complete request becomes a lead for the team to confirm.",
+    )
     primary: ModelChoice
     fallbacks: list[ModelChoice] = Field(default_factory=list, max_length=3)
 
