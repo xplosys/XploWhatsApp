@@ -467,7 +467,7 @@ function AssistantForm({
             type="checkbox"
             checked={draft.greet_by_name ?? true}
             onChange={(e) => set("greet_by_name", e.target.checked)}
-            className="mt-0.5 h-4 w-4 accent-[var(--xp-brand)]"
+            className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--xp-brand)]"
           />
           <span>
             Greet customers by their name in the first reply
@@ -479,7 +479,7 @@ function AssistantForm({
             type="checkbox"
             checked={draft.closing_enabled ?? true}
             onChange={(e) => set("closing_enabled", e.target.checked)}
-            className="mt-0.5 h-4 w-4 accent-[var(--xp-brand)]"
+            className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--xp-brand)]"
           />
           <span>
             Close conversations politely when the customer&apos;s query is answered
