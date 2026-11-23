@@ -45,6 +45,13 @@ class AssistantConfig(BaseModel):
     summary_on_handover: bool = Field(
         default=True, description="Write a short summary for staff when the assistant hands over."
     )
+    greet_by_name: bool = Field(
+        default=True, description="Greet the customer by their name in the first reply of a conversation."
+    )
+    closing_enabled: bool = Field(
+        default=True,
+        description="Once a query is answered, wrap up politely, ask for feedback and close it.",
+    )
     primary: ModelChoice
     fallbacks: list[ModelChoice] = Field(default_factory=list, max_length=3)
 

@@ -129,6 +129,8 @@ async def ai(provider: str, path: str, request: Request) -> Response:
 class Answer(BaseModel):
     text: str
     needs_human: bool = False
+    closing: str | None = None  # "wrap_up" or "goodbye"
+    feedback: dict[str, Any] | None = None
 
 
 class Inbound(BaseModel):
@@ -159,7 +161,13 @@ async def control_meta() -> dict[str, Any]:
 async def control_answer(provider: str, answer: Answer) -> dict[str, int]:
     if provider not in PROVIDER_HOSTS:
         raise HTTPException(404)
-    state["ai"].reply(provider, answer.text, needs_human=answer.needs_human)
+    state["ai"].reply(
+        provider,
+        answer.text,
+        needs_human=answer.needs_human,
+        closing=answer.closing,
+        feedback=answer.feedback,
+    )
     return {"queued": len(state["ai"].queues[provider])}
 
 

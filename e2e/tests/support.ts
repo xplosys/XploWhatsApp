@@ -46,12 +46,25 @@ export const fakes = {
   async meta(): Promise<{ waba_id: string; phone_number_id: string; subscribed: boolean; sent: any[] }> {
     return json(await fetch(`${FAKES_URL}/_control/meta`), "read fake Meta");
   },
-  async answer(provider: string, text: string, needsHuman = false): Promise<void> {
+  /** Queue the model's next answer. `closing` and `feedback` end the conversation politely. */
+  async answer(
+    provider: string,
+    text: string,
+    options:
+      | boolean
+      | { needsHuman?: boolean; closing?: "wrap_up" | "goodbye"; feedback?: { rating?: number; comment?: string } } = {},
+  ): Promise<void> {
+    const opts = typeof options === "boolean" ? { needsHuman: options } : options;
     await json(
       await fetch(`${FAKES_URL}/_control/ai/${provider}/answers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, needs_human: needsHuman }),
+        body: JSON.stringify({
+          text,
+          needs_human: opts.needsHuman ?? false,
+          closing: opts.closing ?? null,
+          feedback: opts.feedback ?? null,
+        }),
       }),
       "queue AI answer",
     );

@@ -399,6 +399,10 @@ export interface ChatMessage {
     reason: string;
     out_of_scope: boolean;
     sources?: KnowledgeSource[];
+    /** Set when this reply ended the conversation. */
+    closing?: "wrap_up" | "goodbye";
+    /** What the customer said when asked for feedback. */
+    feedback?: { rating: number | null; comment: string };
   } | null;
 }
 
@@ -444,6 +448,10 @@ export interface AssistantConfig {
   handover_message: string;
   max_reply_chars: number;
   summary_on_handover: boolean;
+  /** Greet the customer by name in the first reply of a conversation. */
+  greet_by_name?: boolean;
+  /** Once a query is answered, wrap up politely, ask for feedback and close the conversation. */
+  closing_enabled?: boolean;
   primary: ModelChoice;
   fallbacks: ModelChoice[];
 }

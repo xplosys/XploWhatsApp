@@ -15,7 +15,7 @@ from __future__ import annotations
 import dataclasses
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import func, select
@@ -52,6 +52,8 @@ from app.workers.dispatch import AI_AUTO_REPLY, CONVERSATION_SUMMARY, dispatch
 log = structlog.get_logger(__name__)
 
 LOCK_TTL_SECONDS = 180
+# How far back "already asked for feedback" and "already greeted" look.
+CONVERSATION_MEMORY = timedelta(hours=24)
 BUSY_RETRY_SECONDS = 5.0
 
 MEDIA_LABELS = {
@@ -141,6 +143,57 @@ async def _already_answered(session: AsyncSession, conversation_id: uuid.UUID, t
     ) is not None
 
 
+@dataclass(frozen=True)
+class Manners:
+    """What the assistant needs to know to greet once and ask for feedback once."""
+
+    feedback_asked: bool
+    first_reply: bool
+
+
+async def _manners(session: AsyncSession, conversation_id: uuid.UUID) -> Manners:
+    """Feedback counts as asked when the assistant wrapped up in the last day (since the
+    team last handed the conversation back). A reply is the first one when nothing was
+    sent in the last day, or since the assistant last said goodbye (a wrap-up invites an
+    answer, so the reply to it is not a new conversation)."""
+    since = datetime.now(UTC) - CONVERSATION_MEMORY
+    ai_in_conversation = (
+        Message.conversation_id == conversation_id,
+        Message.sender_type == SenderType.AI,
+        Message.created_at > since,
+    )
+    handed_back = await session.scalar(
+        select(func.max(HandoverSession.released_at)).where(
+            HandoverSession.conversation_id == conversation_id
+        )
+    )
+    asked = await session.scalar(
+        select(Message.id)
+        .where(
+            *ai_in_conversation,
+            Message.ai_provenance["closing"].astext == "wrap_up",
+            *((Message.created_at > handed_back,) if handed_back is not None else ()),
+        )
+        .limit(1)
+    )
+    last_goodbye = await session.scalar(
+        select(func.max(Message.created_at)).where(
+            *ai_in_conversation, Message.ai_provenance["closing"].astext == "goodbye"
+        )
+    )
+    start = max(since, last_goodbye) if last_goodbye is not None else since
+    sent = await session.scalar(
+        select(Message.id)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.direction == Direction.OUTBOUND,
+            Message.created_at > start,
+        )
+        .limit(1)
+    )
+    return Manners(feedback_asked=asked is not None, first_reply=sent is None)
+
+
 @dataclass
 class Prepared:
     config: AssistantConfig
@@ -153,6 +206,8 @@ class Prepared:
     retrieval: retrieval.RetrievalPlan | str = "not_configured"
     extra_calls: list[CallRecord] = field(default_factory=list)
     booking: appointments.BookingContext | None = None
+    manners: Manners = Manners(feedback_asked=False, first_reply=False)
+    customer_name: str | None = None
 
 
 async def _hand_over(
@@ -231,6 +286,8 @@ async def _prepare(
         contact_id=conversation.contact_id,
         retrieval=await retrieval.plan_for(session, tenant_id),
         booking=await appointments.ai_context(session, tenant, conversation.contact_id),
+        manners=await _manners(session, conversation_id),
+        customer_name=contact.name or contact.profile_name,
     )
 
 
@@ -276,7 +333,11 @@ async def _deliver(
         return "superseded"  # a newer message arrived while the model was thinking
     if not conversation.ai_enabled:
         return "ai_off"  # an agent took over meanwhile
+    closing = _closing(outcome, prepared, conversation)
     provenance: dict[str, object] = {**outcome.provenance(), "reply_to": str(trigger_id)}
+    provenance.pop("closing", None)
+    if closing != "none":
+        provenance["closing"] = closing
     text = outcome.text
     # Booking and the message that reports it stand or fall together: if the message
     # cannot be queued, the appointment is not kept either.
@@ -334,6 +395,10 @@ async def _deliver(
     if savepoint is not None:
         await savepoint.commit()
     await catalogue.record_reply(session, tenant_id, conversation_id)
+    if closing != "none":
+        # The query is answered: the conversation leaves the open inbox. If the customer
+        # writes again (more questions, or their feedback), it reopens by itself.
+        inbox.set_status(conversation, "closed")
     if outcome.kind == "handover":
         await _hand_over(
             session,
@@ -349,7 +414,26 @@ async def _deliver(
     if outcome.kind == "handover":
         return "handover"
     booking = provenance.get("booking")
-    return f"booking:{booking['result']}" if isinstance(booking, dict) else "replied"
+    if isinstance(booking, dict):
+        return f"booking:{booking['result']}"
+    return f"closed:{closing}" if closing != "none" else "replied"
+
+
+def _closing(outcome: Outcome, prepared: Prepared, conversation: Conversation) -> str:
+    """Whether this reply ends the conversation. Never for a handover, a booking action,
+    or a conversation waiting for a person; and feedback is asked for at most once."""
+    if (
+        outcome.kind != "reply"
+        or outcome.closing == "none"
+        or outcome.booking is not None
+        or outcome.out_of_scope
+        or conversation.needs_human
+        or not prepared.config.closing_enabled
+    ):
+        return "none"
+    if outcome.closing == "wrap_up" and prepared.manners.feedback_asked:
+        return "goodbye"
+    return outcome.closing
 
 
 # Policy denials about the WhatsApp account or number rather than the conversation.
@@ -384,6 +468,8 @@ async def reply(conversation_id: uuid.UUID, tenant_id: uuid.UUID, trigger_id: uu
             knowledge=knowledge,
             retrieval=retrieval_info,
             booking=prepared.booking,
+            feedback_asked=prepared.manners.feedback_asked,
+            greet_name=prepared.customer_name if prepared.manners.first_reply else None,
         )
         async with app_transaction(tenant_id) as session:
             result = await _deliver(session, tenant_id, conversation_id, trigger_id, prepared, outcome)

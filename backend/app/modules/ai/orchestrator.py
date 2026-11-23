@@ -23,7 +23,7 @@ from app.modules.ai.catalogue import CallRecord
 from app.modules.ai.models import ModelKind
 from app.modules.ai.prompt import REPLY_SCHEMA, Passage, customer_text, grounding_text, system_prompt
 from app.modules.ai.providers.base import GenerateRequest, ProviderError, ProviderTimeout, Turn, Usage
-from app.modules.ai.validator import BookingRequest, validate
+from app.modules.ai.validator import BookingRequest, Feedback, validate
 
 
 class BookingPrompt(Protocol):
@@ -65,9 +65,19 @@ class Outcome:
     retrieval: dict[str, object] | None = None
     # An appointment action the assistant asked for (only when booking was offered).
     booking: BookingRequest | None = None
+    # "none", "wrap_up" or "goodbye" (see prompt.CLOSING_KINDS), and what the customer
+    # said about the service, if anything.
+    closing: str = "none"
+    feedback: Feedback | None = None
 
     def provenance(self) -> dict[str, object]:
+        extra: dict[str, object] = {}
+        if self.closing != "none":
+            extra["closing"] = self.closing
+        if self.feedback is not None:
+            extra["feedback"] = self.feedback.as_dict()
         return {
+            **extra,
             "sources": self.sources,
             "retrieval": self.retrieval,
             "provider": self.provider,
@@ -107,6 +117,8 @@ async def run(
     knowledge: Sequence[Passage] = (),
     retrieval: dict[str, object] | None = None,
     booking: BookingPrompt | None = None,
+    feedback_asked: bool = False,
+    greet_name: str | None = None,
 ) -> Outcome:
     outcome = await _run(
         steps,
@@ -117,6 +129,8 @@ async def run(
         knowledge=knowledge,
         retrieval=retrieval,
         booking=booking,
+        feedback_asked=feedback_asked,
+        greet_name=greet_name,
     )
     metrics.observe_ai(outcome.attempts)
     return outcome
@@ -132,6 +146,8 @@ async def _run(
     knowledge: Sequence[Passage] = (),
     retrieval: dict[str, object] | None = None,
     booking: BookingPrompt | None = None,
+    feedback_asked: bool = False,
+    greet_name: str | None = None,
 ) -> Outcome:
     settings = get_settings()
     request_base = GenerateRequest(
@@ -142,6 +158,8 @@ async def _run(
             default_language=default_language,
             knowledge=knowledge,
             booking=booking.prompt if booking else None,
+            feedback_asked=feedback_asked,
+            greet_name=greet_name,
         ),
         turns=turns,
         max_output_tokens=settings.ai_max_output_tokens,
@@ -225,6 +243,8 @@ async def _run(
                 sources,
                 retrieval,
                 verdict.booking if booking is not None else None,
+                closing=verdict.closing if config.closing_enabled else "none",
+                feedback=verdict.feedback,
             )
     return Outcome(
         "handover",
