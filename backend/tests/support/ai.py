@@ -90,8 +90,14 @@ class FakeAI:
         needs_human: bool = False,
         out_of_scope: bool = False,
         booking: dict[str, str] | None = None,
+        closing: str | None = None,
+        feedback: dict[str, Any] | None = None,
     ) -> None:
         answer: dict[str, Any] = {"reply": text, "needs_human": needs_human, "out_of_scope": out_of_scope}
+        if closing is not None:
+            answer["closing"] = closing
+        if feedback is not None:
+            answer["feedback"] = {"rating": 0, "comment": "", **feedback}
         if booking is not None:
             empty = dict.fromkeys(("resource", "date", "time", "patient_name", "reference", "notes"), "")
             answer["booking"] = {"action": "none", **empty, **booking}

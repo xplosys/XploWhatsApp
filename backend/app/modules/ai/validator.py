@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from app.modules.ai.prompt import PROMPT_MARKERS
+from app.modules.ai.prompt import CLOSING_KINDS, PROMPT_MARKERS
 
 SECRET_PATTERNS = [
     re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"),
@@ -73,6 +73,32 @@ def _booking(data: object) -> BookingRequest | None:
     )
 
 
+@dataclass(frozen=True)
+class Feedback:
+    """What the customer said when asked about the service: a 1-5 rating and/or a comment."""
+
+    rating: int | None = None
+    comment: str = ""
+
+    def as_dict(self) -> dict[str, object]:
+        return {"rating": self.rating, "comment": self.comment}
+
+
+def _closing(data: dict[str, object]) -> str:
+    value = str(data.get("closing") or "none").strip().lower()
+    return value if value in CLOSING_KINDS else "none"
+
+
+def _feedback(data: object) -> Feedback | None:
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("rating")
+    rating = raw if isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= 5 else None
+    comment = data.get("comment")
+    text = comment.strip()[:500] if isinstance(comment, str) else ""
+    return Feedback(rating, text) if rating is not None or text else None
+
+
 @dataclass
 class Verdict:
     kind: Literal["reply", "handover", "invalid"]
@@ -80,6 +106,8 @@ class Verdict:
     out_of_scope: bool = False
     issues: list[str] = field(default_factory=list)
     booking: BookingRequest | None = None
+    closing: str = "none"
+    feedback: Feedback | None = None
 
 
 def _parse(raw: str) -> dict[str, object] | None:
@@ -193,9 +221,17 @@ def validate(raw: str, *, max_chars: int, grounding: str, customer: str = "") ->
     facts = ungrounded_facts(visible, grounding, customer)
     if facts:
         return Verdict("invalid", issues=[f"ungrounded: {', '.join(facts)}"])
+    if needs_human:
+        return Verdict("handover", text=reply, out_of_scope=out_of_scope)
+    booking = _booking(data.get("booking"))
+    # A reply that hands over, refuses an unrelated request or reports a booking
+    # action never ends the conversation as well.
+    closing = "none" if out_of_scope or booking is not None else _closing(data)
     return Verdict(
-        "handover" if needs_human else "reply",
+        "reply",
         text=reply,
         out_of_scope=out_of_scope,
-        booking=None if needs_human else _booking(data.get("booking")),
+        booking=booking,
+        closing=closing,
+        feedback=_feedback(data.get("feedback")),
     )

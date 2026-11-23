@@ -52,6 +52,8 @@ function emptyConfig(models: AIModel[]): AssistantConfig {
     handover_message: "Thanks for your message. A member of our team will reply to you shortly.",
     max_reply_chars: 1000,
     summary_on_handover: true,
+    greet_by_name: true,
+    closing_enabled: true,
     primary: { provider: first?.provider ?? "gemini", model: first?.model_id ?? "" },
     fallbacks: [],
   };
@@ -458,6 +460,33 @@ function AssistantForm({
           <span>
             Write a short summary for your team when the assistant hands over
             <span className="block text-xs text-muted">Uses the models below and counts toward AI usage.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={draft.greet_by_name ?? true}
+            onChange={(e) => set("greet_by_name", e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-[var(--xp-brand)]"
+          />
+          <span>
+            Greet customers by their name in the first reply
+            <span className="block text-xs text-muted">Uses the name saved on the contact, or their WhatsApp name.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={draft.closing_enabled ?? true}
+            onChange={(e) => set("closing_enabled", e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-[var(--xp-brand)]"
+          />
+          <span>
+            Close conversations politely when the customer&apos;s query is answered
+            <span className="block text-xs text-muted">
+              The assistant asks if there is anything else, invites a 1 to 5 rating (once a day at most) and closes the
+              conversation. It reopens if the customer writes again. Never during a booking or a handover.
+            </span>
           </span>
         </label>
         <div className="space-y-3 rounded-control bg-surface-muted p-4">

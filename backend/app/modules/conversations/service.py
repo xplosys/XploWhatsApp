@@ -162,10 +162,12 @@ async def record_inbound(
         conv.last_inbound_at = wa_timestamp
         conv.service_window_expires_at = wa_timestamp + window
     conv.last_message_at = max(conv.last_message_at or wa_timestamp, wa_timestamp)
-    conv.unread_count = (conv.unread_count or 0) + 1
-    conv.status = "open"
-    conv.closed_at = None
+    if msg_type != "reaction" or conv.status == "open":
+        conv.unread_count = (conv.unread_count or 0) + 1
     if msg_type != "reaction":
+        # A reaction (say, a thumbs-up to a goodbye) does not reopen a closed conversation.
+        conv.status = "open"
+        conv.closed_at = None
         conv.awaiting_reply = True
     if contact.last_inbound_at is None or wa_timestamp > contact.last_inbound_at:
         contact.last_inbound_at = wa_timestamp

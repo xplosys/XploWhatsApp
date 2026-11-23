@@ -460,6 +460,94 @@ async def test_assistant_can_ask_for_a_person(clinic: Actor, client: httpx.Async
     assert (await conversation(clinic.tenant_id)).needs_human is True
 
 
+# ---- greeting, closing and feedback ---------------------------------------------
+
+
+def reaction(wamid: str) -> dict[str, Any]:
+    payload = inbound_text("x", wamid=wamid)
+    msg = payload["entry"][0]["changes"][0]["value"]["messages"][0]
+    msg.pop("text")
+    msg.update(type="reaction", reaction={"message_id": "wamid.OUT1", "emoji": "👍"})
+    return payload
+
+
+async def test_greets_by_name_then_wraps_up_closes_and_records_feedback(
+    clinic: Actor, client: httpx.AsyncClient, ai: FakeAI
+) -> None:
+    await setup_assistant(clinic, config())
+
+    # First reply: the prompt asks for a greeting by the customer's WhatsApp name.
+    ai.reply("openai", "Hi Priya! Scaling and cleaning costs ₹800.")
+    assert await deliver(client, inbound_text("How much is a cleaning?", wamid="wamid.G1")) == [
+        "processed",
+        "replied",
+        "done",
+    ]
+    assert '"Priya"' in ai.calls("openai")[0]["instructions"]
+    assert (await conversation(clinic.tenant_id)).status == "open"
+
+    # The query is answered and the customer says thanks: wrap up, ask for feedback, close.
+    ai.reply(
+        "openai",
+        "You're welcome! Is there anything else I can help with? If not, how would you rate us from 1 to 5?",
+        closing="wrap_up",
+    )
+    results = await deliver(client, inbound_text("Ok thanks", wamid="wamid.G2"))
+    assert "closed:wrap_up" in results
+    second = ai.calls("openai")[1]["instructions"]
+    assert '"Priya"' not in second and "rate their experience" in second
+    conv = await conversation(clinic.tenant_id)
+    assert conv.status == "closed" and conv.closed_at is not None
+    assert (await ai_messages(clinic.tenant_id))[-1].ai_provenance["closing"] == "wrap_up"
+
+    # A thumbs-up reaction does not reopen it.
+    await deliver(client, reaction("wamid.G3"))
+    assert (await conversation(clinic.tenant_id)).status == "closed"
+
+    # The customer answers with a rating: it reopens, the assistant thanks them and closes again.
+    ai.reply(
+        "openai",
+        "Thank you so much for your feedback, Priya. Have a lovely day!",
+        closing="goodbye",
+        feedback={"rating": 5, "comment": "Very quick and helpful"},
+    )
+    results = await deliver(client, inbound_text("5, very quick and helpful", wamid="wamid.G4"))
+    assert "closed:goodbye" in results
+    third = ai.calls("openai")[2]["instructions"]
+    assert "do not ask again" in third and '"Priya"' not in third
+    last = (await ai_messages(clinic.tenant_id))[-1]
+    assert last.ai_provenance["closing"] == "goodbye"
+    assert last.ai_provenance["feedback"] == {"rating": 5, "comment": "Very quick and helpful"}
+    assert (await conversation(clinic.tenant_id)).status == "closed"
+
+    # A new conversation after the goodbye is greeted again, but feedback was already
+    # asked today, so a second wrap-up only says goodbye.
+    ai.reply("openai", "Hi again Priya! Yes, we have free parking. Take care.", closing="wrap_up")
+    results = await deliver(client, inbound_text("Oh and do you have parking? thanks", wamid="wamid.G5"))
+    assert "closed:goodbye" in results
+    fourth = ai.calls("openai")[3]["instructions"]
+    assert '"Priya"' in fourth and "do not ask again" in fourth
+    assert (await ai_messages(clinic.tenant_id))[-1].ai_provenance["closing"] == "goodbye"
+
+
+async def test_no_closing_during_handover_or_when_switched_off(
+    clinic: Actor, client: httpx.AsyncClient, ai: FakeAI
+) -> None:
+    await setup_assistant(clinic, config(closing_enabled=False, greet_by_name=False))
+    ai.reply("openai", "Hello! Glad I could help.", closing="wrap_up")
+    assert "replied" in await deliver(client, inbound_text("Thanks", wamid="wamid.H1"))
+    prompt = ai.calls("openai")[0]["instructions"]
+    assert '"Priya"' not in prompt and 'Set closing to "none"' in prompt
+    assert (await conversation(clinic.tenant_id)).status == "open"
+    assert "closing" not in (await ai_messages(clinic.tenant_id))[-1].ai_provenance
+
+    await setup_assistant(clinic, config())
+    ai.reply("openai", "Let me get a colleague for the refund.", needs_human=True, closing="wrap_up")
+    assert "handover" in await deliver(client, inbound_text("I want a refund", wamid="wamid.H2"))
+    conv = await conversation(clinic.tenant_id)
+    assert conv.status == "open" and conv.needs_human is True
+
+
 async def test_invalid_json_and_prompt_leaks_are_rejected(
     clinic: Actor, client: httpx.AsyncClient, ai: FakeAI
 ) -> None:

@@ -691,6 +691,18 @@ function Bubble({ message: m }: { message: ChatMessage }) {
             {[...new Set(m.ai_provenance.sources.map((src) => src.title))].join(", ")}
           </p>
         )}
+        {m.sender_type === "ai" && m.ai_provenance?.feedback && (
+          <p className="mt-1 text-xs text-muted">
+            Customer feedback:
+            {m.ai_provenance.feedback.rating ? ` ${"★".repeat(m.ai_provenance.feedback.rating)} ${m.ai_provenance.feedback.rating}/5` : ""}
+            {m.ai_provenance.feedback.comment ? ` · “${m.ai_provenance.feedback.comment}”` : ""}
+          </p>
+        )}
+        {m.sender_type === "ai" && m.ai_provenance?.closing && (
+          <p className="mt-1 text-xs text-muted">
+            {m.ai_provenance.closing === "wrap_up" ? "Asked for feedback · conversation closed" : "Said goodbye · conversation closed"}
+          </p>
+        )}
         {m.status === "failed" && (
           <p className="mt-1 text-xs text-danger">
             {m.error_message ?? "WhatsApp did not deliver this message."}
